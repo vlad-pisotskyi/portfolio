@@ -27,9 +27,16 @@ import {
 } from "@/lib/chat-fallback";
 
 // googleapis (in the scheduler tool) is Node-only, and we stream — pin Node
-// and cap the request so the route can't hang or run on Edge.
+// and cap the function duration. maxDuration bounds cost only: a lambda killed
+// at the limit surfaces nothing to the client, so the route also aborts the
+// stream itself (STREAM_ABORT_MS below) while it can still emit a terminal
+// event, and hangs are failed over by the first-token watchdog in
+// lib/chat-fallback.ts long before either limit.
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+// Under maxDuration by enough margin to flush the abort down the open stream.
+const STREAM_ABORT_MS = 55_000;
 
 // Cheap abuse/cost guards applied before the model is ever touched.
 // MAX_INPUT_CHARS is shared with the client input cap via lib/chat-limits.
@@ -163,6 +170,7 @@ export async function POST(req: Request) {
       maxRetries: order.length > 1 ? 0 : 2,
       system: await getSystemPrompt(),
       messages: await convertToModelMessages(messages),
+      abortSignal: AbortSignal.timeout(STREAM_ABORT_MS),
       stopWhen: stepCountIs(3),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       tools: {

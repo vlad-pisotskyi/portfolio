@@ -247,3 +247,21 @@ describe("POST /api/chat", () => {
     ).rejects.toThrow(/unavailable/i);
   });
 });
+
+describe("route timeout hardening", () => {
+  it("pins the Node runtime and a 60s duration cap", async () => {
+    const mod = await import("./route");
+    expect(mod.runtime).toBe("nodejs");
+    expect(mod.maxDuration).toBe(60);
+  });
+
+  it("gives streamText an overall abort deadline so the route ends the stream itself", async () => {
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    const opts = streamTextMock.mock.calls[0][0] as {
+      abortSignal?: AbortSignal;
+    };
+    expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
+    expect(opts.abortSignal?.aborted).toBe(false);
+  });
+});

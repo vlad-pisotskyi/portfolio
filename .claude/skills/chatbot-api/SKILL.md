@@ -45,7 +45,7 @@ Check: `npm run gate` (typecheck — wrong helper names or message types fail `t
 Each rule names its check, or is labeled `guidance:` with the missing check logged in `CLAUDE.local.md`.
 
 1. **Node runtime + duration for streaming routes that touch googleapis.**
-   `app/api/chat/route.ts` calls `getAvailability()` from `lib/google-calendar.ts`, which uses `googleapis` + the Node `JWT` client — incompatible with the Edge runtime, and a streaming tool call can outrun the default function timeout. The route MUST export `runtime = "nodejs"` and a `maxDuration` (e.g. `30`).
+   `app/api/chat/route.ts` calls `getAvailability()` from `lib/google-calendar.ts`, which uses `googleapis` + the Node `JWT` client — incompatible with the Edge runtime, and a streaming tool call can outrun the default function timeout. The route MUST export `runtime = "nodejs"` and a `maxDuration` (currently `60`).
    Check: `npm run gate` (build) compiles the exports; verify the scheduler tool completes within the timeout on the deployed preview.
 
 2. **Client handles both tool terminal states.**
