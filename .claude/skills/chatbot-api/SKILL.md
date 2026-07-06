@@ -31,10 +31,11 @@ Check: `npm run gate` (typecheck — wrong helper names or message types fail `t
    - `AI_PROVIDER` (default `gemini`) is the primary; `AI_FALLBACK` (default `anthropic`; `none` disables failover) backs it up. Free Gemini by default, pay for Anthropic only when Gemini is down.
    - `orderProviders()` returns the attempt order, skipping any provider the in-memory `createBreaker()` has tripped for its cooldown (default 60s) so a known-down provider isn't re-probed every request.
    - `createFallbackModel(order.map(buildModel))` wraps the models so its `doStream`/`doGenerate` try each in turn: a TRANSIENT reject (429 / 5xx / network — `isTransientProviderError`) fails over to the next provider **in the same request** (the client only ever sees a loading state, never a mid-stream error), trips the breaker, and logs `[chat] provider switch: ...`. A non-transient error (auth / bad-request) rethrows immediately — no silent failover onto the paid provider.
+   - Every `doStream` attempt runs under a first-token deadline (`FIRST_TOKEN_TIMEOUT_MS`, 10s): a provider that never resolves or opens a stream and emits nothing is aborted and thrown as `FirstTokenTimeoutError`, which classifies transient and fails over like a 429 (Rule 7). `stream-start` parts are SDK bookkeeping, not a first token.
    - `streamText` gets `maxRetries: 0` when the chain has a fallback (the wrapper owns failover), else `2`.
    - `onError` on `toUIMessageStreamResponse` only fires when the WHOLE chain fails (failover is internal) — return a friendly masked message there. The `CHAT_ENABLED=false` kill switch returns 503 before streaming, so it never reaches `onError`.
    - Per-provider model ids come from env: `ANTHROPIC_MODEL` (default `claude-haiku-4-5-20251001`), `GEMINI_MODEL` (default `gemini-3.5-flash`), `OPENAI_MODEL` (default `gpt-4o-mini`). `buildModel()` reads keys from `process.env` at call time.
-   Check: `npm run gate` runs `lib/chat-fallback.test.ts` (breaker, ordering, transient classification, wrapper failover incl. 429-failover / 401-no-failover) + the route handler tests.
+   Check: `npm run gate` runs `lib/chat-fallback.test.ts` (breaker, ordering, transient classification, wrapper failover incl. 429-failover / 401-no-failover, first-token watchdog) + the route handler tests.
 4. Define each tool with `tool({ description, inputSchema: z.object({...}), execute })`. Keep the loop bounded with `stopWhen: stepCountIs(N)` (currently `3`) so a tool that re-triggers the model cannot spin unbounded.
 5. For every tool you add, add the matching client branch in `ChatDrawer` keyed on `part.type === "tool-{name}"`, and handle BOTH terminal states: `output-available` AND `output-error` (see the rules). A pending state is fine, but a tool can fail.
 6. Keep the system prompt / persona out of the committed route file (see the persona rule).
@@ -45,8 +46,8 @@ Check: `npm run gate` (typecheck — wrong helper names or message types fail `t
 Each rule names its check, or is labeled `guidance:` with the missing check logged in `CLAUDE.local.md`.
 
 1. **Node runtime + duration for streaming routes that touch googleapis.**
-   `app/api/chat/route.ts` calls `getAvailability()` from `lib/google-calendar.ts`, which uses `googleapis` + the Node `JWT` client — incompatible with the Edge runtime, and a streaming tool call can outrun the default function timeout. The route MUST export `runtime = "nodejs"` and a `maxDuration` (currently `60`).
-   Check: `npm run gate` (build) compiles the exports; verify the scheduler tool completes within the timeout on the deployed preview.
+   `app/api/chat/route.ts` calls `getAvailability()` from `lib/google-calendar.ts`, which uses `googleapis` + the Node `JWT` client — incompatible with the Edge runtime, and a streaming tool call can outrun the default function timeout. The route MUST export `runtime = "nodejs"` and a `maxDuration` (currently `60`). `maxDuration` bounds cost only — it is never the hang handler (that is Rule 7's watchdog plus the route's own `streamText` abort deadline, which fires with margin under the platform limit so the client still gets a terminal event).
+   Check: route tests pin the `runtime`/`maxDuration` exports and the `streamText` abort deadline under `npm run gate`; verify the scheduler tool completes within the timeout on the deployed preview.
 
 2. **Client handles both tool terminal states.**
    In `ChatDrawer`, each `tool-{name}` part branch MUST render `output-available` (success) and `output-error` (failure) distinctly, plus an optional pending state — an `execute` rejection must never fall through to a permanent pending spinner.
@@ -67,6 +68,10 @@ Each rule names its check, or is labeled `guidance:` with the missing check logg
 6. **Rate-limit + spend cap before public launch.**
    The route is unauthenticated and bills a paid LLM per request, so it MUST sit behind a per-IP rate limiter and a spend cap.
    Check: `lib/rate-limit.ts` (`checkRateLimit`) caps the route per client IP and returns 429 when exceeded; pair it with Upstash env plus a provider monthly spend cap as the backstop.
+
+7. **A hang is a failure: deadline every provider attempt.**
+   Failover fires only on a rejected `doStream`/`doGenerate`; a provider that connects but never emits must be *converted* into a rejection or it rides to the platform kill with no error, no failover, and a client stuck on a spinner (prod incident 2026-07-06). Every `doStream` attempt in `lib/chat-fallback.ts` races a first-token deadline (`FIRST_TOKEN_TIMEOUT_MS`) well under the route's stream abort and `maxDuration`; on expiry it aborts the attempt and throws `FirstTokenTimeoutError`, which classifies transient and fails over. The watchdog disengages after the first real part — a mid-stream stall must never silently fail over once output reached the client.
+   Check: `npm run gate` runs the `first-token watchdog` cases in `lib/chat-fallback.test.ts` — connect hang, silent stream, and stream-start-only all assert failover to the next provider; a stalled last provider rejects with `FirstTokenTimeoutError`.
 
 ## Checkpoints
 
