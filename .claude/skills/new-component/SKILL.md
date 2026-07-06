@@ -59,6 +59,8 @@ Creates a component that conforms to this repo's style guide: right folder, type
   Check: each component's `{Name}.test.tsx` asserts `getByRole("heading", { level: N })` and `getByRole("region", { name })`; `npm run test:e2e` runs an axe scan on every page.
 - **Every component has a co-located `{Name}.test.tsx`.**
   guidance: a tests-exist guard is planned (see `skill-authoring` Rule 1); not yet wired into `npm test`. Until then a missing test only fails if it is depended on. Check tracked in `CLAUDE.local.md` backlog.
+- **Async states are visible: pending, failure, success — always.** Any component that awaits anything (fetch, stream, retry, booking) renders a distinct pending indicator and a failure state that names a next step. Auto-recovery (a retry, a provider failover) must be visible too — silent recovery reads as a hang. Never promise recovery the system will not deliver: a countdown must match a real schedule. Canonical: `ChatDrawer` (countdown-retry bubble, provider badge, per-tool pending/output-error branches) and the `BookingNotifier` toasts. Doctrine: `notes/styleguide/error-handling.md` ("Sad path first (UI)").
+  Check: the component's `{Name}.test.tsx` asserts the pending and the failure state by role (`status`/`alert`), the same way the heading contract is asserted; the `ChatDrawer.test.tsx` "countdown retry" cases are the exemplar.
 
 ## Checkpoints
 
