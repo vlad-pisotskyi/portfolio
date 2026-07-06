@@ -64,7 +64,7 @@ function buildModel(provider: ChatProvider): ResolvedModel {
     return openai(model);
   }
   if (provider === "gemini") {
-    const model = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+    const model = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
     const google = createGoogleGenerativeAI({
       apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
     });
