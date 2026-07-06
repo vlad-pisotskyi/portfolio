@@ -369,3 +369,43 @@ describe("OpenAI last-resort fallback", () => {
     expect(anthropicBuild).not.toHaveBeenCalled();
   });
 });
+
+describe("error codes for the client", () => {
+  it("guard responses carry a machine-readable code", async () => {
+    const { POST } = await import("./route");
+
+    process.env.CHAT_ENABLED = "false";
+    const disabled = await POST(makeRequest([userMessage("hi")]));
+    expect(await disabled.json()).toMatchObject({ code: "disabled" });
+    delete process.env.CHAT_ENABLED;
+
+    const tooLong = await POST(makeRequest([userMessage("x".repeat(4001))]));
+    expect(await tooLong.json()).toMatchObject({ code: "too_long" });
+
+    rateLimitMock.mockResolvedValue({
+      success: false,
+      remaining: 0,
+      limit: 10,
+      reset: 0,
+      enforced: true,
+    });
+    const limited = await POST(makeRequest([userMessage("hi")]));
+    expect(await limited.json()).toMatchObject({ code: "rate_limited" });
+  });
+
+  it("stream onError sends retryable for a transient chain failure, fatal otherwise", async () => {
+    let captured: Record<string, unknown> = {};
+    streamTextMock.mockReturnValue({
+      toUIMessageStreamResponse: (opts: Record<string, unknown>) => {
+        captured = opts;
+        return new Response("stream", { status: 200 });
+      },
+    });
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    const onError = captured.onError as (err: unknown) => string;
+    expect(onError({ statusCode: 429 })).toBe("retryable");
+    expect(onError(new Error("fetch failed"))).toBe("retryable");
+    expect(onError({ statusCode: 401 })).toBe("fatal");
+  });
+});

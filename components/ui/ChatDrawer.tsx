@@ -14,11 +14,32 @@ import {
   DEFAULT_PROVIDER,
   PROVIDER_LABELS,
 } from "@/lib/chat-providers";
+import {
+  chatErrorCode,
+  RETRY_COUNTDOWN_SECONDS,
+  type ChatErrorCode,
+} from "@/lib/chat-errors";
 
 interface ChatDrawerProps {
   isOpen: boolean;
   onClose: () => void;
 }
+
+// The user always learns what went wrong and what happens next — no failure
+// is silent, and the countdown is only shown when a retry is an honest
+// promise (see lib/chat-errors.ts).
+const ERROR_COPY: Record<ChatErrorCode, string> = {
+  retryable: "Chat hit an error and couldn't recover.",
+  fatal: "Chat hit an error and couldn't recover.",
+  disabled: "Chat is offline right now.",
+  rate_limited: "You've hit the demo's rate limit — it resets within the hour.",
+  too_long: "That message was too long for this demo.",
+};
+
+type RetryState =
+  | { phase: "counting"; secondsLeft: number }
+  | { phase: "retrying" }
+  | { phase: "given-up" };
 
 export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -29,11 +50,57 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   const [offlineError, setOfflineError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { messages, sendMessage, status, error } = useChat();
+  const { messages, sendMessage, regenerate, status, error } = useChat();
+  const [retry, setRetry] = useState<RetryState | null>(null);
+  const [retriesSpent, setRetriesSpent] = useState(0);
+  const [prevError, setPrevError] = useState<Error | undefined>(undefined);
+
+  // Adjust-during-render, not an effect: a NEW error starts the countdown
+  // (transient outage, first failure), reports given-up (the one auto-retry
+  // already failed), or clears the retry UI (non-retryable — its copy
+  // renders instead).
+  if (error !== prevError) {
+    setPrevError(error);
+    if (error && chatErrorCode(error) === "retryable") {
+      setRetry(
+        retriesSpent > 0
+          ? { phase: "given-up" }
+          : { phase: "counting", secondsLeft: RETRY_COUNTDOWN_SECONDS },
+      );
+    } else {
+      setRetry(null);
+    }
+  }
+  // A later successful reply re-arms the auto-retry for the next outage.
+  if (status === "ready" && !error && retriesSpent > 0) {
+    setRetriesSpent(0);
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // One interval per counting phase; every state change happens inside the
+  // timer callback (external system), and the final tick spends the one
+  // auto-retry. The phase always starts from the full countdown, so the
+  // interval owns the remaining count locally.
+  const counting = retry?.phase === "counting";
+  useEffect(() => {
+    if (!counting) return;
+    let remaining = RETRY_COUNTDOWN_SECONDS;
+    const id = setInterval(() => {
+      remaining -= 1;
+      if (remaining > 0) {
+        setRetry({ phase: "counting", secondsLeft: remaining });
+        return;
+      }
+      clearInterval(id);
+      setRetriesSpent((n) => n + 1);
+      setRetry({ phase: "retrying" });
+      regenerate();
+    }, 1000);
+    return () => clearInterval(id);
+  }, [counting, regenerate]);
 
   function handleScroll(e: React.UIEvent<HTMLDivElement>) {
     setIsScrolled(e.currentTarget.scrollTop > 4);
@@ -259,14 +326,37 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 </div>
               )}
 
-              {error && (
+              {error && retry?.phase === "counting" && (
+                <div className="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-muted">
+                  <span role="alert">
+                    Chat hit a hiccup — retrying in{" "}
+                    {/* The ticking number is decoration; screen readers hear
+                        the stable sentence once, not sixty announcements. */}
+                    <span aria-hidden="true" className="tabular-nums">
+                      {retry.secondsLeft}s
+                    </span>
+                    <span className="sr-only">about a minute</span>.
+                  </span>
+                </div>
+              )}
+
+              {error && retry?.phase === "retrying" && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-muted animate-pulse"
+                >
+                  Retrying now...
+                </div>
+              )}
+
+              {error && retry?.phase !== "counting" && retry?.phase !== "retrying" && (
                 <div
                   role="alert"
                   className="flex flex-col gap-2 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-muted"
                 >
                   <span>
-                    This demo is paused or rate-limited. Learn more in a case
-                    study, or{" "}
+                    {ERROR_COPY[chatErrorCode(error) ?? "fatal"]} Learn more in
+                    a case study, or{" "}
                     <a
                       href={siteConfig.links.linkedin}
                       target="_blank"

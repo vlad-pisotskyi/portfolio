@@ -24,6 +24,7 @@ import {
   createBreaker,
   orderProviders,
   createFallbackModel,
+  isTransientProviderError,
 } from "@/lib/chat-fallback";
 
 // googleapis (in the scheduler tool) is Node-only, and we stream — pin Node
@@ -113,7 +114,7 @@ export async function POST(req: Request) {
   // Kill switch: flip CHAT_ENABLED=false to take the paid LLM offline instantly.
   if (process.env.CHAT_ENABLED === "false") {
     return Response.json(
-      { error: "Chat is currently disabled." },
+      { error: "Chat is currently disabled.", code: "disabled" },
       { status: 503 },
     );
   }
@@ -122,11 +123,17 @@ export async function POST(req: Request) {
     const { messages }: { messages: UIMessage[] } = await req.json();
 
     if (!Array.isArray(messages) || messages.length > MAX_MESSAGES) {
-      return Response.json({ error: "Too many messages." }, { status: 413 });
+      return Response.json(
+        { error: "Too many messages.", code: "too_long" },
+        { status: 413 },
+      );
     }
     const totalChars = messages.reduce((n, m) => n + messageChars(m), 0);
     if (totalChars > MAX_INPUT_CHARS) {
-      return Response.json({ error: "Message too long." }, { status: 413 });
+      return Response.json(
+        { error: "Message too long.", code: "too_long" },
+        { status: 413 },
+      );
     }
 
     const rate = await checkRateLimit(clientIp(req));
@@ -135,6 +142,7 @@ export async function POST(req: Request) {
         {
           error:
             "Rate limit reached. Try again later, or reach me via the links on the site.",
+          code: "rate_limited",
         },
         { status: 429 },
       );
@@ -231,17 +239,18 @@ export async function POST(req: Request) {
           : undefined,
       // Failover is handled inside the wrapped model, so reaching here means
       // every provider in the chain failed (or a non-transient error surfaced).
-      // Errors are masked by default; surface a friendly, non-leaking message
-      // (the client renders a fallback bubble on `error`).
+      // Send a code, not prose — the client owns the copy, and only a
+      // transient chain failure may honestly promise the countdown retry
+      // (the breaker recovers within RETRY_COUNTDOWN_SECONDS).
       onError: (err: unknown) => {
         console.error("[chat] all providers failed", err);
-        return "This demo hit an error. Try again in a moment, or reach me via the links on the site.";
+        return isTransientProviderError(err) ? "retryable" : "fatal";
       },
     });
   } catch (err) {
     console.error("[chat] request failed", err);
     return Response.json(
-      { error: "Chat is temporarily unavailable." },
+      { error: "Chat is temporarily unavailable.", code: "fatal" },
       { status: 503 },
     );
   }
