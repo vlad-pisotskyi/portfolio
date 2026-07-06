@@ -246,3 +246,34 @@ describe("ChatDrawer", () => {
     expect(screen.queryByText(/checking vlad's notes/i)).not.toBeInTheDocument();
   });
 });
+
+describe("provider badge", () => {
+  function assistantWith(provider?: string): UIMessage {
+    return {
+      id: `badge-${provider ?? "none"}`,
+      role: "assistant",
+      parts: [{ type: "text", text: "answer" }],
+      ...(provider ? { metadata: { provider } } : {}),
+    } as unknown as UIMessage;
+  }
+
+  it("shows the primary provider by default", () => {
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/powered by gemini 3\.5 flash/i)).toBeInTheDocument();
+  });
+
+  it("announces the switch when a reply came from the fallback", () => {
+    mockMessages = [assistantWith("anthropic")];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(
+      screen.getByText(/gemini 3\.5 flash unavailable — running on claude haiku 4\.5/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/powered by/i)).not.toBeInTheDocument();
+  });
+
+  it("returns to the primary badge when a later reply is Gemini again", () => {
+    mockMessages = [assistantWith("anthropic"), assistantWith("gemini")];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/powered by gemini 3\.5 flash/i)).toBeInTheDocument();
+  });
+});

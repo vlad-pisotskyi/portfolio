@@ -265,3 +265,54 @@ describe("route timeout hardening", () => {
     expect(opts.abortSignal?.aborted).toBe(false);
   });
 });
+
+describe("provider metadata for the client badge", () => {
+  function captureResponseOpts(): () => Record<string, unknown> {
+    let captured: Record<string, unknown> = {};
+    streamTextMock.mockReturnValue({
+      toUIMessageStreamResponse: (opts: Record<string, unknown>) => {
+        captured = opts;
+        return new Response("stream", { status: 200 });
+      },
+    });
+    return () => captured;
+  }
+
+  function metadataFor(
+    opts: Record<string, unknown>,
+    partType: string,
+  ): unknown {
+    const messageMetadata = opts.messageMetadata as (o: {
+      part: { type: string };
+    }) => unknown;
+    return messageMetadata({ part: { type: partType } });
+  }
+
+  it("stamps the primary provider on message finish", async () => {
+    const getOpts = captureResponseOpts();
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    expect(metadataFor(getOpts(), "finish")).toEqual({ provider: "gemini" });
+    expect(metadataFor(getOpts(), "text-delta")).toBeUndefined();
+  });
+
+  it("stamps the fallback provider after a same-request failover", async () => {
+    googleBuild.mockReturnValueOnce({
+      specificationVersion: "v2",
+      provider: "gemini",
+      modelId: "gemini-3.5-flash",
+      supportedUrls: {},
+      doStream: () => Promise.reject({ statusCode: 429 }),
+      doGenerate: () => Promise.resolve(),
+    });
+    const getOpts = captureResponseOpts();
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    // Drive the wrapped model the way streamText would; the 429 fails over.
+    const { model } = streamTextMock.mock.calls[0][0] as {
+      model: { doStream: (o: unknown) => Promise<unknown> };
+    };
+    await model.doStream({});
+    expect(metadataFor(getOpts(), "finish")).toEqual({ provider: "anthropic" });
+  });
+});

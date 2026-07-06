@@ -9,6 +9,11 @@ import { SchedulerCard } from "./SchedulerCard";
 import type { DaySchedule } from "@/lib/availability";
 import { siteConfig } from "@/lib/site";
 import { MAX_INPUT_CHARS } from "@/lib/chat-limits";
+import {
+  activeProviderFrom,
+  DEFAULT_PROVIDER,
+  PROVIDER_LABELS,
+} from "@/lib/chat-providers";
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -43,6 +48,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   }
 
   const isLoading = status === "streaming" || status === "submitted";
+  const provider = activeProviderFrom(messages);
 
   function handleScheduleClick() {
     setShowScheduler(true);
@@ -304,6 +310,17 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
             </div>
 
             <form onSubmit={handleSubmit} className="border-t border-border p-3">
+              <p
+                aria-live="polite"
+                className={clsx(
+                  "mb-2 font-mono text-[10px] uppercase tracking-badge",
+                  provider === DEFAULT_PROVIDER ? "text-muted" : "text-accent",
+                )}
+              >
+                {provider === DEFAULT_PROVIDER
+                  ? `Powered by ${PROVIDER_LABELS[provider]}`
+                  : `${PROVIDER_LABELS[DEFAULT_PROVIDER]} unavailable — running on ${PROVIDER_LABELS[provider]}`}
+              </p>
               <div className="flex items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2">
                 <input
                   type="text"

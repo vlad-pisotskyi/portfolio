@@ -143,10 +143,15 @@ export async function POST(req: Request) {
     });
     console.log(`[chat] providers=[${order.join(", ")}]`);
 
+    // Which provider is actually answering this request — starts as the
+    // leader, reassigned on failover. Stamped into message metadata so the
+    // client badge can show the switch instead of hiding it.
+    let activeProvider = order[0];
     const model = createFallbackModel(order.map(buildModel), {
       onFailover: (failedIndex, err) => {
         const failed = order[failedIndex];
         const next = order[failedIndex + 1];
+        activeProvider = next;
         breaker.trip(failed);
         // A watchdog timeout has no statusCode — log its name so a stall is
         // distinguishable from a quota 429 in prod logs.
@@ -200,6 +205,16 @@ export async function POST(req: Request) {
     });
 
     return result.toUIMessageStreamResponse({
+      // Stamp the answering provider on the message: at start (so a
+      // breaker-rerouted request shows the fallback immediately) and at each
+      // step/message finish (so a mid-request failover overwrites the start
+      // value). The client badge renders this.
+      messageMetadata: ({ part }) =>
+        part.type === "start" ||
+        part.type === "finish-step" ||
+        part.type === "finish"
+          ? { provider: activeProvider }
+          : undefined,
       // Failover is handled inside the wrapped model, so reaching here means
       // every provider in the chain failed (or a non-transient error surfaced).
       // Errors are masked by default; surface a friendly, non-leaking message
