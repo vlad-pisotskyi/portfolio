@@ -95,6 +95,7 @@ beforeEach(() => {
   delete process.env.CHAT_ENABLED;
   delete process.env.AI_PROVIDER;
   delete process.env.AI_FALLBACK;
+  delete process.env.OPENAI_API_KEY;
   rateLimitMock.mockResolvedValue({
     success: true,
     remaining: 9,
@@ -314,5 +315,57 @@ describe("provider metadata for the client badge", () => {
     };
     await model.doStream({});
     expect(metadataFor(getOpts(), "finish")).toEqual({ provider: "anthropic" });
+  });
+});
+
+describe("OpenAI last-resort fallback", () => {
+  function rejecting(provider: string, statusCode: number) {
+    return {
+      specificationVersion: "v2",
+      provider,
+      modelId: provider,
+      supportedUrls: {},
+      doStream: () => Promise.reject({ statusCode }),
+      doGenerate: () => Promise.resolve(),
+    };
+  }
+
+  it("joins the chain when OPENAI_API_KEY is set and catches a double failure", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    googleBuild.mockReturnValueOnce(rejecting("gemini", 429));
+    anthropicBuild.mockReturnValueOnce(rejecting("anthropic", 529));
+    openaiBuild.mockReturnValueOnce({
+      ...rejecting("openai", 0),
+      doStream: () => Promise.resolve("openai-ok"),
+    } as unknown as ReturnType<typeof openaiBuild>);
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    expect(openaiBuild).toHaveBeenCalled();
+    const { model } = streamTextMock.mock.calls[0][0] as {
+      model: { doStream: (o: unknown) => Promise<unknown> };
+    };
+    await expect(model.doStream({})).resolves.toBe("openai-ok");
+  });
+
+  it("stays out of the chain without a key and logs the gap once", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    await POST(makeRequest([userMessage("hi again")]));
+    expect(openaiBuild).not.toHaveBeenCalled();
+    const keyWarnings = errorSpy.mock.calls.filter((c) =>
+      String(c[0]).includes("OPENAI_API_KEY"),
+    );
+    expect(keyWarnings).toHaveLength(1);
+    errorSpy.mockRestore();
+  });
+
+  it("is disabled entirely by AI_FALLBACK=none", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.AI_FALLBACK = "none";
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    expect(openaiBuild).not.toHaveBeenCalled();
+    expect(anthropicBuild).not.toHaveBeenCalled();
   });
 });

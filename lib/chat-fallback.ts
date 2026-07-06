@@ -84,20 +84,22 @@ export function createBreaker(
 }
 
 /**
- * The ordered list of providers to attempt this request. A primary in its
- * cooldown is skipped (we go straight to the fallback); otherwise the primary
- * leads and the fallback backs it up. Always returns at least one provider.
+ * The ordered list of providers to attempt this request. Providers in their
+ * cooldown are skipped (no doomed attempt burned on a known-down provider);
+ * duplicates collapse in first-seen order. Always returns at least one
+ * provider — an all-down chain still leads with the primary rather than
+ * returning nothing.
  */
 export function orderProviders(opts: {
   primary: ChatProvider;
-  fallback: ChatProvider | null;
+  fallbacks: ChatProvider[];
   isDown: (provider: ChatProvider) => boolean;
 }): ChatProvider[] {
-  const { primary, fallback, isDown } = opts;
+  const { primary, fallbacks, isDown } = opts;
   const order: ChatProvider[] = [];
-  if (!isDown(primary)) order.push(primary);
-  if (fallback && fallback !== primary) order.push(fallback);
-  // Primary down with no usable fallback: it's still the only option.
+  for (const provider of [primary, ...fallbacks]) {
+    if (!order.includes(provider) && !isDown(provider)) order.push(provider);
+  }
   if (order.length === 0) order.push(primary);
   return order;
 }

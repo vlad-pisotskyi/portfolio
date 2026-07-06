@@ -82,31 +82,59 @@ describe("takeRecovery", () => {
 describe("orderProviders", () => {
   const isDownNone = () => false;
 
-  it("leads with the primary and backs it with the fallback", () => {
+  it("leads with the primary and backs it with the fallbacks in order", () => {
     expect(
-      orderProviders({ primary: "gemini", fallback: "anthropic", isDown: isDownNone }),
-    ).toEqual(["gemini", "anthropic"]);
+      orderProviders({
+        primary: "gemini",
+        fallbacks: ["anthropic", "openai"],
+        isDown: isDownNone,
+      }),
+    ).toEqual(["gemini", "anthropic", "openai"]);
   });
 
   it("skips the primary while it is in cooldown", () => {
     expect(
       orderProviders({
         primary: "gemini",
-        fallback: "anthropic",
+        fallbacks: ["anthropic"],
         isDown: (p) => p === "gemini",
       }),
     ).toEqual(["anthropic"]);
   });
 
-  it("returns just the primary when there is no fallback", () => {
+  it("skips a fallback in cooldown so a doomed attempt is not wasted", () => {
     expect(
-      orderProviders({ primary: "anthropic", fallback: null, isDown: isDownNone }),
+      orderProviders({
+        primary: "gemini",
+        fallbacks: ["anthropic", "openai"],
+        isDown: (p) => p === "anthropic",
+      }),
+    ).toEqual(["gemini", "openai"]);
+  });
+
+  it("dedupes a fallback that repeats the primary or another fallback", () => {
+    expect(
+      orderProviders({
+        primary: "gemini",
+        fallbacks: ["gemini", "openai", "openai"],
+        isDown: isDownNone,
+      }),
+    ).toEqual(["gemini", "openai"]);
+  });
+
+  it("returns just the primary when there are no fallbacks", () => {
+    expect(
+      orderProviders({ primary: "anthropic", fallbacks: [], isDown: isDownNone }),
     ).toEqual(["anthropic"]);
   });
 
-  it("still returns the primary if it is down with no fallback", () => {
+  it("still returns the primary when everything is down", () => {
     expect(
-      orderProviders({ primary: "gemini", fallback: null, isDown: () => true }),
+      orderProviders({
+        primary: "gemini",
+        fallbacks: ["anthropic"],
+        isDown: () => true,
+      }),
     ).toEqual(["gemini"]);
   });
 });

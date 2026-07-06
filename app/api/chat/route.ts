@@ -82,17 +82,31 @@ function buildModel(provider: ChatProvider): ResolvedModel {
   return anthropic(model);
 }
 
+// Logged once per instance, not per request — a missing key is a deploy-time
+// gap, not a request event.
+let warnedNoOpenAiKey = false;
+
 function resolveProviders(): {
   primary: ChatProvider;
-  fallback: ChatProvider | null;
+  fallbacks: ChatProvider[];
 } {
   const primary = (process.env.AI_PROVIDER ?? "gemini") as ChatProvider;
   const fallbackEnv = process.env.AI_FALLBACK ?? "anthropic";
-  const fallback =
-    fallbackEnv === "none" || fallbackEnv === primary
-      ? null
-      : (fallbackEnv as ChatProvider);
-  return { primary, fallback };
+  // `none` disables failover entirely, including the OpenAI last resort.
+  if (fallbackEnv === "none") return { primary, fallbacks: [] };
+  const fallbacks: ChatProvider[] = [fallbackEnv as ChatProvider];
+  // OpenAI backs the whole chain as a last resort, but only when its key is
+  // deployed. An explicit AI_FALLBACK=openai stays in the chain regardless,
+  // so that misconfig surfaces as an auth error instead of being dropped.
+  if (process.env.OPENAI_API_KEY) {
+    fallbacks.push("openai");
+  } else if (!warnedNoOpenAiKey) {
+    warnedNoOpenAiKey = true;
+    console.error(
+      "[chat] OPENAI_API_KEY missing — OpenAI last-resort fallback disabled",
+    );
+  }
+  return { primary, fallbacks };
 }
 
 export async function POST(req: Request) {
@@ -126,7 +140,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { primary, fallback } = resolveProviders();
+    const { primary, fallbacks } = resolveProviders();
     // Log the switch BACK to the primary once its cooldown lapses, so the full
     // failover lifecycle (trip -> fallback -> recover) is visible in prod logs.
     if (breaker.takeRecovery(primary)) {
@@ -138,7 +152,7 @@ export async function POST(req: Request) {
     // the client just sees the loading state until the fallback's first token.
     const order = orderProviders({
       primary,
-      fallback,
+      fallbacks,
       isDown: (p) => breaker.isDown(p),
     });
     console.log(`[chat] providers=[${order.join(", ")}]`);
