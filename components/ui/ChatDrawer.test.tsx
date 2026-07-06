@@ -277,3 +277,22 @@ describe("provider badge", () => {
     expect(screen.getByText(/powered by gemini 3\.5 flash/i)).toBeInTheDocument();
   });
 });
+
+describe("mobile viewport", () => {
+  it("input is 16px on mobile so iOS Safari does not auto-zoom on focus", () => {
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: /chat message/i });
+    // Sub-16px focused inputs trigger iOS auto-zoom, which shoves the fixed
+    // drawer out of the visual viewport. text-base (16px) at mobile widths is
+    // the fix; sm:text-sm restores the desktop look.
+    expect(input.className).toMatch(/\btext-base\b/);
+    expect(input.className).toMatch(/\bsm:text-sm\b/);
+  });
+
+  it("drawer heights use dvh so the software keyboard resizes it", () => {
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const drawer = screen.getByRole("dialog");
+    expect(drawer.className).toMatch(/h-\[82dvh\]/);
+    expect(drawer.className).not.toMatch(/h-\[82vh\]/);
+  });
+});

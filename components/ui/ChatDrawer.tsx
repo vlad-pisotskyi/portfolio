@@ -81,7 +81,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed inset-x-3 bottom-3 z-60 flex h-[82vh] flex-col overflow-hidden rounded-2xl border border-accent/30 bg-elevated sm:inset-auto sm:h-auto sm:bottom-6 sm:right-6 sm:w-110 sm:rounded-xl sm:shadow-2xl sm:highlight-border"
+            className="fixed inset-x-3 bottom-3 z-60 flex h-[82dvh] flex-col overflow-hidden rounded-2xl border border-accent/30 bg-elevated sm:inset-auto sm:h-auto sm:bottom-6 sm:right-6 sm:w-110 sm:rounded-xl sm:shadow-2xl sm:highlight-border"
           >
             <div
               className={clsx(
@@ -117,7 +117,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
               aria-live="polite"
               aria-relevant="additions"
               onScroll={handleScroll}
-              className="scrollbar-min flex flex-1 flex-col gap-3 overflow-y-auto p-4 sm:max-h-[70vh] sm:min-h-130"
+              className="scrollbar-min flex flex-1 flex-col gap-3 overflow-y-auto p-4 sm:max-h-[70dvh] sm:min-h-130"
             >
               {messages.length === 0 && (
                 <div className="flex flex-col gap-3">
@@ -331,7 +331,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                   onChange={(e) => setInput(e.target.value)}
                   disabled={isLoading}
                   maxLength={MAX_INPUT_CHARS}
-                  className="flex-1 bg-transparent text-sm text-text placeholder:text-muted focus:outline-none disabled:opacity-50"
+                  className="flex-1 bg-transparent text-base sm:text-sm text-text placeholder:text-muted focus:outline-none disabled:opacity-50"
                 />
                 <button
                   type="submit"
