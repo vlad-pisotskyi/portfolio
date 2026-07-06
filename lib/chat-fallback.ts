@@ -24,6 +24,20 @@ export type ResolvedModel = Exclude<LanguageModel, string>;
 export type ChatProvider = "gemini" | "anthropic" | "openai";
 
 export const FALLBACK_COOLDOWN_MS = 60_000;
+export const FIRST_TOKEN_TIMEOUT_MS = 10_000;
+
+/**
+ * A provider accepted the connection but produced nothing before the deadline.
+ * Failover only fires on a rejected call, so the watchdog converts silence into
+ * this rejection; it carries no statusCode, which isTransientProviderError
+ * classifies as transient — a hang fails over exactly like a 429.
+ */
+export class FirstTokenTimeoutError extends Error {
+  constructor(provider: string, timeoutMs: number) {
+    super(`no first token from ${provider} within ${timeoutMs}ms`);
+    this.name = "FirstTokenTimeoutError";
+  }
+}
 
 export interface Breaker {
   isDown(provider: ChatProvider): boolean;
@@ -123,6 +137,83 @@ export function isTransientProviderError(err: unknown): boolean {
 }
 
 /**
+ * Call a model's doStream and hold the result back until its first real stream
+ * part arrives, all under one deadline. Covers both hang shapes the reject-only
+ * failover cannot see: a doStream that never resolves (connect hang) and a
+ * stream that opens then emits nothing (silent stream). `stream-start` is SDK
+ * bookkeeping emitted before any network activity, so it does not count as a
+ * first token. On expiry the attempt is aborted (the deadline's AbortSignal is
+ * merged with the caller's) and FirstTokenTimeoutError is thrown for the
+ * failover loop to classify. After the first token the watchdog disengages —
+ * a mid-stream stall cannot fail over silently once output reached the client.
+ */
+async function streamWithFirstTokenDeadline(
+  model: ResolvedModel,
+  options: unknown,
+  timeoutMs: number,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const outer = (options as { abortSignal?: AbortSignal } | null)?.abortSignal;
+  if (outer?.aborted) controller.abort(outer.reason);
+  else outer?.addEventListener("abort", () => controller.abort(outer.reason), { once: true });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(
+        new FirstTokenTimeoutError(String(model.provider ?? "provider"), timeoutMs),
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    const doStream = (
+      model as unknown as { doStream: (o: unknown) => PromiseLike<unknown> }
+    ).doStream;
+    const result = await Promise.race([
+      doStream({ ...(options as object), abortSignal: controller.signal }),
+      deadline,
+    ]);
+
+    const stream = (result as { stream?: unknown } | null)?.stream;
+    if (!(stream instanceof ReadableStream)) return result;
+
+    const reader = (stream as ReadableStream<unknown>).getReader();
+    const buffered: unknown[] = [];
+    try {
+      for (;;) {
+        const next = await Promise.race([reader.read(), deadline]);
+        if (next.done) break;
+        buffered.push(next.value);
+        const type = (next.value as { type?: string } | null)?.type;
+        if (type !== "stream-start") break;
+      }
+    } catch (err) {
+      reader.cancel().catch(() => {});
+      throw err;
+    }
+
+    const replayed = new ReadableStream<unknown>({
+      start(c) {
+        for (const part of buffered) c.enqueue(part);
+      },
+      async pull(c) {
+        const { done, value } = await reader.read();
+        if (done) c.close();
+        else c.enqueue(value);
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
+      },
+    });
+    return { ...(result as object), stream: replayed };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Wrap an ordered list of provider models into one model. Its doStream/doGenerate
  * try each provider in turn; if one REJECTS with a transient error (Gemini's 429
  * throws before any token), the next is tried within the same call so the failure
@@ -140,12 +231,15 @@ export function createFallbackModel(
     shouldFailover?: (err: unknown) => boolean;
     /** Called when provider at `failedIndex` fails over to the next one. */
     onFailover?: (failedIndex: number, err: unknown) => void;
+    /** First-token deadline per doStream attempt. Defaults to FIRST_TOKEN_TIMEOUT_MS. */
+    firstTokenTimeoutMs?: number;
   } = {},
 ): ResolvedModel {
   if (models.length === 0) {
     throw new Error("createFallbackModel: at least one model is required");
   }
   const shouldFailover = opts.shouldFailover ?? isTransientProviderError;
+  const firstTokenTimeoutMs = opts.firstTokenTimeoutMs ?? FIRST_TOKEN_TIMEOUT_MS;
 
   async function attempt(
     method: "doStream" | "doGenerate",
@@ -158,7 +252,11 @@ export function createFallbackModel(
           "doStream" | "doGenerate",
           (o: unknown) => PromiseLike<unknown>
         >;
-        return await model[method](options);
+        // doGenerate has no per-token shape to watchdog (a long full completion
+        // is legitimate); the deadline guards streaming only.
+        return method === "doStream"
+          ? await streamWithFirstTokenDeadline(models[i], options, firstTokenTimeoutMs)
+          : await model.doGenerate(options);
       } catch (err) {
         lastErr = err;
         if (i === models.length - 1 || !shouldFailover(err)) throw err;

@@ -1,10 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createBreaker,
   orderProviders,
   createFallbackModel,
   isTransientProviderError,
+  FirstTokenTimeoutError,
   FALLBACK_COOLDOWN_MS,
+  FIRST_TOKEN_TIMEOUT_MS,
   type ResolvedModel,
 } from "./chat-fallback";
 
@@ -178,6 +180,153 @@ describe("createFallbackModel", () => {
 
   it("throws when given no models", () => {
     expect(() => createFallbackModel([])).toThrow();
+  });
+});
+
+/** A ReadableStream that emits the given parts, then optionally hangs open. */
+function partStream(parts: unknown[], opts: { hang?: boolean } = {}): ReadableStream<unknown> {
+  return new ReadableStream({
+    start(c) {
+      for (const part of parts) c.enqueue(part);
+      if (!opts.hang) c.close();
+    },
+  });
+}
+
+async function readAll(stream: ReadableStream<unknown>): Promise<unknown[]> {
+  const reader = stream.getReader();
+  const parts: unknown[] = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return parts;
+    parts.push(value);
+  }
+}
+
+describe("first-token watchdog", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fails over when doStream never resolves (connect hang)", async () => {
+    const onFailover = vi.fn();
+    const model = createFallbackModel(
+      [
+        fakeModel("gemini", { stream: () => new Promise(() => {}) }),
+        fakeModel("anthropic", { stream: () => Promise.resolve("anthropic-ok") }),
+      ],
+      { onFailover },
+    );
+    const result = callDoStream(model);
+    await vi.advanceTimersByTimeAsync(FIRST_TOKEN_TIMEOUT_MS);
+    await expect(result).resolves.toBe("anthropic-ok");
+    expect(onFailover).toHaveBeenCalledWith(0, expect.any(FirstTokenTimeoutError));
+  });
+
+  it("fails over when the stream opens but never emits a part", async () => {
+    const onFailover = vi.fn();
+    const model = createFallbackModel(
+      [
+        fakeModel("gemini", {
+          stream: () => Promise.resolve({ stream: partStream([], { hang: true }) }),
+        }),
+        fakeModel("anthropic", { stream: () => Promise.resolve("anthropic-ok") }),
+      ],
+      { onFailover },
+    );
+    const result = callDoStream(model);
+    await vi.advanceTimersByTimeAsync(FIRST_TOKEN_TIMEOUT_MS);
+    await expect(result).resolves.toBe("anthropic-ok");
+    expect(onFailover).toHaveBeenCalledWith(0, expect.any(FirstTokenTimeoutError));
+  });
+
+  it("treats a lone stream-start part as bookkeeping, not a first token", async () => {
+    const onFailover = vi.fn();
+    const model = createFallbackModel(
+      [
+        fakeModel("gemini", {
+          stream: () =>
+            Promise.resolve({
+              stream: partStream([{ type: "stream-start", warnings: [] }], { hang: true }),
+            }),
+        }),
+        fakeModel("anthropic", { stream: () => Promise.resolve("anthropic-ok") }),
+      ],
+      { onFailover },
+    );
+    const result = callDoStream(model);
+    await vi.advanceTimersByTimeAsync(FIRST_TOKEN_TIMEOUT_MS);
+    await expect(result).resolves.toBe("anthropic-ok");
+    expect(onFailover).toHaveBeenCalledWith(0, expect.any(FirstTokenTimeoutError));
+  });
+
+  it("passes the stream through intact when the first token arrives in time", async () => {
+    const onFailover = vi.fn();
+    const parts = [
+      { type: "stream-start", warnings: [] },
+      { type: "text-delta", delta: "hi" },
+      { type: "finish" },
+    ];
+    const model = createFallbackModel(
+      [
+        fakeModel("gemini", { stream: () => Promise.resolve({ stream: partStream(parts) }) }),
+        fakeModel("anthropic", {}),
+      ],
+      { onFailover },
+    );
+    const result = (await callDoStream(model)) as { stream: ReadableStream<unknown> };
+    await expect(readAll(result.stream)).resolves.toEqual(parts);
+    expect(onFailover).not.toHaveBeenCalled();
+  });
+
+  it("aborts the stalled provider's call when the deadline fires", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const model = createFallbackModel([
+      {
+        ...fakeModel("gemini", {}),
+        doStream: (o: { abortSignal?: AbortSignal }) => {
+          seenSignal = o.abortSignal;
+          return new Promise(() => {});
+        },
+      } as unknown as ResolvedModel,
+      fakeModel("anthropic", { stream: () => Promise.resolve("anthropic-ok") }),
+    ]);
+    const result = callDoStream(model);
+    await vi.advanceTimersByTimeAsync(FIRST_TOKEN_TIMEOUT_MS);
+    await result;
+    expect(seenSignal?.aborted).toBe(true);
+  });
+
+  it("rejects with FirstTokenTimeoutError when the last provider stalls too", async () => {
+    const model = createFallbackModel([
+      fakeModel("gemini", { stream: () => new Promise(() => {}) }),
+      fakeModel("anthropic", { stream: () => new Promise(() => {}) }),
+    ]);
+    const result = callDoStream(model);
+    result.catch(() => {}); // settled below; avoid an unhandled rejection between timer advances
+    await vi.advanceTimersByTimeAsync(FIRST_TOKEN_TIMEOUT_MS * 2);
+    await expect(result).rejects.toBeInstanceOf(FirstTokenTimeoutError);
+  });
+
+  it("honors a custom firstTokenTimeoutMs", async () => {
+    const onFailover = vi.fn();
+    const model = createFallbackModel(
+      [
+        fakeModel("gemini", { stream: () => new Promise(() => {}) }),
+        fakeModel("anthropic", { stream: () => Promise.resolve("anthropic-ok") }),
+      ],
+      { onFailover, firstTokenTimeoutMs: 50 },
+    );
+    const result = callDoStream(model);
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(result).resolves.toBe("anthropic-ok");
+  });
+
+  it("classifies the timeout as transient so the default policy fails over", () => {
+    expect(isTransientProviderError(new FirstTokenTimeoutError("gemini", 10_000))).toBe(true);
   });
 });
 

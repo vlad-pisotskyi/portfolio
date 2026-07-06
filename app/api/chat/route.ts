@@ -141,10 +141,14 @@ export async function POST(req: Request) {
         const failed = order[failedIndex];
         const next = order[failedIndex + 1];
         breaker.trip(failed);
+        // A watchdog timeout has no statusCode — log its name so a stall is
+        // distinguishable from a quota 429 in prod logs.
         const status =
           err && typeof err === "object" && "statusCode" in err
             ? (err as { statusCode?: unknown }).statusCode
-            : "unknown";
+            : err instanceof Error
+              ? err.name
+              : "unknown";
         console.warn(
           `[chat] provider switch: ${failed} failed (status=${status}), failing over to ${next} silently`,
         );
