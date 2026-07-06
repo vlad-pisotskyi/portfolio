@@ -94,14 +94,17 @@ test.describe("Chat flow", () => {
       route.fulfill({
         status: 503,
         contentType: "application/json",
-        body: JSON.stringify({ error: "Chat is temporarily unavailable." }),
+        body: JSON.stringify({
+          error: "Chat is temporarily unavailable.",
+          code: "fatal",
+        }),
       }),
     );
 
     await openChatAndSend(page, "Hello");
 
     const dialog = page.getByRole("dialog", { name: "Chat with Vlad" });
-    await expect(dialog.getByRole("alert")).toContainText(/paused or rate-limited/i);
+    await expect(dialog.getByRole("alert")).toContainText(/couldn't recover/i);
     await expect(
       dialog.getByRole("link", { name: /connect with me on linkedin/i }),
     ).toBeVisible();
