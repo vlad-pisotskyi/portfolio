@@ -486,13 +486,24 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 <p
                   aria-live="polite"
                   className={clsx(
-                    "font-mono text-[10px] uppercase tracking-badge",
+                    "font-mono text-[10px] font-bold uppercase tracking-badge",
                     provider === DEFAULT_PROVIDER ? "text-muted" : "text-accent",
                   )}
                 >
-                  {provider === DEFAULT_PROVIDER
-                    ? `Powered by ${PROVIDER_LABELS[provider]}`
-                    : `${PROVIDER_LABELS[DEFAULT_PROVIDER]} unavailable — running on ${PROVIDER_LABELS[provider]}`}
+                  {provider === DEFAULT_PROVIDER ? (
+                    `Powered by ${PROVIDER_LABELS[provider]}`
+                  ) : (
+                    // Controlled two-line break at the dash — free wrapping
+                    // split the fallback label mid-word at drawer width.
+                    <>
+                      <span className="block">
+                        {PROVIDER_LABELS[DEFAULT_PROVIDER]} unavailable —{" "}
+                      </span>
+                      <span className="block">
+                        running on {PROVIDER_LABELS[provider]}
+                      </span>
+                    </>
+                  )}
                 </p>
                 {/* Always mounted, same size as the badge — appearing on the
                     first keystroke (and at 12px vs 10px) made the row jump. */}

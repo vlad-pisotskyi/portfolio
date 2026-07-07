@@ -527,10 +527,28 @@ describe("provider badge", () => {
   it("announces the switch when a reply came from the fallback", () => {
     mockMessages = [assistantWith("anthropic")];
     render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
-    expect(
-      screen.getByText(/gemini 3\.5 flash unavailable — running on claude haiku 4\.5/i),
-    ).toBeInTheDocument();
+    // The sentence spans two block elements — assert on the whole badge.
+    const badge = screen.getByText(/unavailable —/i).parentElement;
+    expect(badge?.textContent).toMatch(
+      /gemini 3\.5 flash unavailable — running on claude haiku 4\.5/i,
+    );
     expect(screen.queryByText(/powered by/i)).not.toBeInTheDocument();
+  });
+
+  it("breaks the failover badge at the dash, not mid-word", () => {
+    mockMessages = [assistantWith("anthropic")];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(
+      screen.getByText(/gemini 3\.5 flash unavailable —/i).className,
+    ).toMatch(/\bblock\b/);
+    expect(
+      screen.getByText(/^running on claude haiku 4\.5$/i).className,
+    ).toMatch(/\bblock\b/);
+  });
+
+  it("renders the badge bold for small-size readability", () => {
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/powered by/i).className).toMatch(/\bfont-bold\b/);
   });
 
   it("returns to the primary badge when a later reply is Gemini again", () => {
