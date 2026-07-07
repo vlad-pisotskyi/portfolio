@@ -29,7 +29,7 @@
   --tracking-badge: 0.15em;
 
   --font-sans: var(--font-space-grotesk), system-ui, sans-serif;
-  --font-mono: var(--font-space-mono), ui-monospace, monospace;
+  --font-mono: var(--font-mono-face), ui-monospace, monospace;
 
   --animate-fade-in: fade-in 0.2s ease-out;
   --animate-reveal-ltr: reveal-ltr 0.8s ease-out;

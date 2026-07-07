@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Space_Mono } from "next/font/google";
+import { Space_Grotesk, IBM_Plex_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
@@ -14,10 +14,12 @@ const spaceGrotesk = Space_Grotesk({
   display: "swap",
 });
 
-const spaceMono = Space_Mono({
-  weight: ["400", "700"],
+// IBM Plex Mono over Space Mono: real 500 for the eyebrow weight (Space Mono
+// synthesized it) and a narrower, more open letterform at 10-13px.
+const plexMono = IBM_Plex_Mono({
+  weight: ["400", "500", "700"],
   subsets: ["latin"],
-  variable: "--font-space-mono",
+  variable: "--font-mono-face",
   display: "swap",
 });
 
@@ -59,7 +61,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html
       lang="en"
-      className={`${spaceGrotesk.variable} ${spaceMono.variable}`}
+      className={`${spaceGrotesk.variable} ${plexMono.variable}`}
       suppressHydrationWarning
     >
       <head>
