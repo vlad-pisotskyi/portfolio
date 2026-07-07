@@ -486,20 +486,28 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 <p
                   aria-live="polite"
                   className={clsx(
-                    "font-mono text-[10px] font-bold uppercase tracking-badge",
+                    "font-mono text-[10px] uppercase tracking-label",
                     provider === DEFAULT_PROVIDER ? "text-muted" : "text-accent",
                   )}
                 >
                   {provider === DEFAULT_PROVIDER ? (
-                    `Powered by ${PROVIDER_LABELS[provider]}`
+                    // Weight contrast carries the information: the prefix is
+                    // boilerplate, the provider name is the readable part.
+                    <>
+                      Powered by{" "}
+                      <span className="font-bold">
+                        {PROVIDER_LABELS[provider]}
+                      </span>
+                    </>
                   ) : (
                     // Controlled two-line break at the dash — free wrapping
                     // split the fallback label mid-word at drawer width.
+                    // Reveal staggers like BookingPanel's confirmation lines.
                     <>
-                      <span className="block">
+                      <span className="block font-bold animate-reveal-ltr">
                         {PROVIDER_LABELS[DEFAULT_PROVIDER]} unavailable —{" "}
                       </span>
-                      <span className="block">
+                      <span className="block font-bold animate-reveal-ltr [animation-delay:0.4s] [animation-fill-mode:backwards]">
                         running on {PROVIDER_LABELS[provider]}
                       </span>
                     </>

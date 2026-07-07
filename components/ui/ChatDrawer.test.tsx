@@ -521,7 +521,10 @@ describe("provider badge", () => {
 
   it("shows the primary provider by default", () => {
     render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByText(/powered by gemini 3\.5 flash/i)).toBeInTheDocument();
+    // Provider name sits in a nested bold span — assert the whole badge.
+    expect(screen.getByText(/powered by/i).textContent).toMatch(
+      /powered by gemini 3\.5 flash/i,
+    );
   });
 
   it("announces the switch when a reply came from the fallback", () => {
@@ -535,26 +538,51 @@ describe("provider badge", () => {
     expect(screen.queryByText(/powered by/i)).not.toBeInTheDocument();
   });
 
-  it("breaks the failover badge at the dash, not mid-word", () => {
+  it("breaks the failover badge at the dash, not mid-word, in bold", () => {
     mockMessages = [assistantWith("anthropic")];
     render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
-    expect(
-      screen.getByText(/gemini 3\.5 flash unavailable —/i).className,
-    ).toMatch(/\bblock\b/);
-    expect(
-      screen.getByText(/^running on claude haiku 4\.5$/i).className,
-    ).toMatch(/\bblock\b/);
+    const firstLine = screen.getByText(/gemini 3\.5 flash unavailable —/i);
+    const secondLine = screen.getByText(/^running on claude haiku 4\.5$/i);
+    expect(firstLine.className).toMatch(/\bblock\b/);
+    expect(firstLine.className).toMatch(/\bfont-bold\b/);
+    expect(secondLine.className).toMatch(/\bblock\b/);
+    expect(secondLine.className).toMatch(/\bfont-bold\b/);
   });
 
-  it("renders the badge bold for small-size readability", () => {
+  it("reveals the failover lines with the booking-page typewriter effect", () => {
+    mockMessages = [assistantWith("anthropic")];
     render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByText(/powered by/i).className).toMatch(/\bfont-bold\b/);
+    const firstLine = screen.getByText(/gemini 3\.5 flash unavailable —/i);
+    const secondLine = screen.getByText(/^running on claude haiku 4\.5$/i);
+    expect(firstLine.className).toMatch(/\banimate-reveal-ltr\b/);
+    expect(secondLine.className).toMatch(/\banimate-reveal-ltr\b/);
+    // Staggered like BookingPanel: the second line waits for the first.
+    expect(secondLine.className).toMatch(/animation-delay/);
+  });
+
+  it("emphasizes the provider name over the powered-by prefix", () => {
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/powered by/i).className).not.toMatch(
+      /\bfont-bold\b/,
+    );
+    expect(screen.getByText(/gemini 3\.5 flash/i).className).toMatch(
+      /\bfont-bold\b/,
+    );
+  });
+
+  it("spaces the badge with the wider label tracking", () => {
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/powered by/i).className).toMatch(
+      /\btracking-label\b/,
+    );
   });
 
   it("returns to the primary badge when a later reply is Gemini again", () => {
     mockMessages = [assistantWith("anthropic"), assistantWith("gemini")];
     render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByText(/powered by gemini 3\.5 flash/i)).toBeInTheDocument();
+    expect(screen.getByText(/powered by/i).textContent).toMatch(
+      /powered by gemini 3\.5 flash/i,
+    );
   });
 });
 
