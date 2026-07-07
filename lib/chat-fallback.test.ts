@@ -197,6 +197,36 @@ describe("createFallbackModel", () => {
     await expect(callDoStream(model)).rejects.toEqual({ statusCode: 500 });
   });
 
+  it("invokes doStream/doGenerate with the provider model as receiver", async () => {
+    // Real SDK models are class instances whose methods read `this` internally
+    // (e.g. this.getArgs). An unbound call loses the receiver and every
+    // provider throws the same TypeError, which classifies as transient and
+    // burns the whole chain. Plain-object fakes can't catch that — this class
+    // fake can.
+    class ProviderModel {
+      specificationVersion = "v2";
+      provider = "gemini";
+      modelId = "gemini";
+      supportedUrls = {};
+      doStream(): Promise<unknown> {
+        return Promise.resolve(this.getArgs());
+      }
+      doGenerate(): Promise<unknown> {
+        return Promise.resolve(this.getArgs());
+      }
+      private getArgs(): string {
+        return `${this.modelId}-ok`;
+      }
+    }
+    const model = createFallbackModel([
+      new ProviderModel() as unknown as ResolvedModel,
+    ]);
+    await expect(callDoStream(model)).resolves.toBe("gemini-ok");
+    await expect(
+      (model as unknown as { doGenerate: (o: unknown) => Promise<unknown> }).doGenerate({}),
+    ).resolves.toBe("gemini-ok");
+  });
+
   it("passes through non-call members from the primary model", () => {
     const model = createFallbackModel([
       fakeModel("gemini", {}),

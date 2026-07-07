@@ -170,11 +170,13 @@ async function streamWithFirstTokenDeadline(
   });
 
   try {
-    const doStream = (
-      model as unknown as { doStream: (o: unknown) => PromiseLike<unknown> }
-    ).doStream;
+    // Method call on the model, never a detached reference — SDK models are
+    // class instances whose doStream reads `this` internally.
+    const callable = model as unknown as {
+      doStream: (o: unknown) => PromiseLike<unknown>;
+    };
     const result = await Promise.race([
-      doStream({ ...(options as object), abortSignal: controller.signal }),
+      callable.doStream({ ...(options as object), abortSignal: controller.signal }),
       deadline,
     ]);
 
