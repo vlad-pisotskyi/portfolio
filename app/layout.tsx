@@ -62,6 +62,10 @@ export default function RootLayout({ children }: RootLayoutProps) {
     <html
       lang="en"
       className={`${spaceGrotesk.variable} ${plexMono.variable}`}
+      // Tells the router the smooth scrolling in globals.css is intentional,
+      // so it can suspend it during route transitions (instant scroll-to-top
+      // on navigation; smooth stays for in-page anchors).
+      data-scroll-behavior="smooth"
       suppressHydrationWarning
     >
       <head>
