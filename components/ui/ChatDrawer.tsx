@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUp, X } from "lucide-react";
 import { useChat } from "@ai-sdk/react";
+import { Streamdown } from "streamdown";
 import { SchedulerCard } from "./SchedulerCard";
 import type { DaySchedule } from "@/lib/availability";
 import { siteConfig } from "@/lib/site";
@@ -13,6 +14,7 @@ import {
   activeProviderFrom,
   DEFAULT_PROVIDER,
   PROVIDER_LABELS,
+  type ChatMessageMetadata,
 } from "@/lib/chat-providers";
 import {
   chatErrorCode,
@@ -49,6 +51,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   const [offlineLoading, setOfflineLoading] = useState(false);
   const [offlineError, setOfflineError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const { messages, sendMessage, regenerate, status, error } = useChat();
   const [retry, setRetry] = useState<RetryState | null>(null);
@@ -114,8 +117,62 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     sendMessage({ text });
   }
 
+  // Enter sends; Shift+Enter (native) and Cmd/Ctrl+Enter (inserted manually —
+  // browsers ignore Enter with those modifiers in a textarea) start a new
+  // line. IME composition Enter only confirms the composition.
+  function handleInputKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    if (e.shiftKey) return;
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      const el = e.currentTarget;
+      el.setRangeText(
+        "\n",
+        el.selectionStart ?? el.value.length,
+        el.selectionEnd ?? el.value.length,
+        "end",
+      );
+      setInput(el.value);
+      return;
+    }
+    handleSubmit(e);
+  }
+
   const isLoading = status === "streaming" || status === "submitted";
+  // The countdown promises an auto-retry of the LAST message; letting the
+  // user queue a new one mid-countdown would race it. Given-up re-enables.
+  const retryBusy = retry?.phase === "counting" || retry?.phase === "retrying";
+  const inputBlocked = isLoading || retryBusy;
   const provider = activeProviderFrom(messages);
+
+  // Disabling the input drops focus; hand it back the moment the block lifts
+  // (answer complete or retry given up) so the user can keep typing.
+  const wasBlockedRef = useRef(false);
+  useEffect(() => {
+    if (wasBlockedRef.current && !inputBlocked) inputRef.current?.focus();
+    wasBlockedRef.current = inputBlocked;
+  }, [inputBlocked]);
+
+  // The user must always see that work is in progress: the dots cover every
+  // in-flight gap — before the stream opens, after the start event creates a
+  // textless assistant message, and between a tool result and the follow-up
+  // answer. They yield only to a pending tool's own status line and to the
+  // answer text itself.
+  const lastParts =
+    messages[messages.length - 1]?.role === "assistant"
+      ? messages[messages.length - 1].parts ?? []
+      : [];
+  const answerStarted = lastParts.some(
+    (part) => part.type === "text" && part.text,
+  );
+  const toolPending = lastParts.some(
+    (part) =>
+      part.type.startsWith("tool-") &&
+      "state" in part &&
+      part.state !== "output-available" &&
+      part.state !== "output-error",
+  );
+  const showThinking = isLoading && !answerStarted && !toolPending;
 
   function handleScheduleClick() {
     setShowScheduler(true);
@@ -201,7 +258,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                         key={prompt}
                         type="button"
                         onClick={() => sendMessage({ text: prompt })}
-                        disabled={isLoading}
+                        disabled={inputBlocked}
                         className="rounded-full border border-accent/30 bg-raised px-3 py-1 text-[13px] text-muted hover:border-accent/60 hover:text-text focus-ring transition-colors disabled:opacity-50"
                       >
                         {prompt}
@@ -233,17 +290,33 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 >
                   {message.parts.map((part, i) => {
                     if (part.type === "text" && part.text) {
+                      // Assistant replies are markdown (Streamdown parses
+                      // incomplete blocks mid-stream); user input stays
+                      // literal text. wrap-anywhere keeps unbroken strings
+                      // (long URLs) inside the bubble on both sides.
                       return (
                         <div
                           key={i}
                           className={clsx(
-                            "rounded-lg px-3 py-2 text-base leading-relaxed",
+                            "rounded-lg px-3 py-2 text-base leading-relaxed wrap-anywhere",
                             message.role === "user"
-                              ? "max-w-[65%] bg-accent/10 text-text"
+                              ? "max-w-[65%] whitespace-pre-wrap bg-accent/10 text-text"
                               : "border border-border bg-bg text-text",
                           )}
                         >
-                          {part.text}
+                          {message.role === "assistant" ? (
+                            // linkSafety off: its confirm-modal turns links
+                            // into buttons; here links come from the curated
+                            // bio corpus, so plain anchors are honest.
+                            <Streamdown
+                              className="chat-markdown"
+                              linkSafety={{ enabled: false }}
+                            >
+                              {part.text}
+                            </Streamdown>
+                          ) : (
+                            part.text
+                          )}
                         </div>
                       );
                     }
@@ -317,10 +390,19 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
 
                     return null;
                   })}
+                  {/* The route stamps truncated when the model hit the output
+                      cap — an unmarked mid-sentence stop reads as a bug. */}
+                  {message.role === "assistant" &&
+                    (message.metadata as ChatMessageMetadata | undefined)
+                      ?.truncated && (
+                      <div className="text-xs text-muted">
+                        Answer cut short by the demo&apos;s length limit.
+                      </div>
+                    )}
                 </div>
               ))}
 
-              {isLoading && messages[messages.length - 1]?.role === "user" && (
+              {showThinking && (
                 <div className="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-muted animate-pulse">
                   ...
                 </div>
@@ -400,49 +482,53 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
             </div>
 
             <form onSubmit={handleSubmit} className="border-t border-border p-3">
-              <p
-                aria-live="polite"
-                className={clsx(
-                  "mb-2 font-mono text-[10px] uppercase tracking-badge",
-                  provider === DEFAULT_PROVIDER ? "text-muted" : "text-accent",
-                )}
-              >
-                {provider === DEFAULT_PROVIDER
-                  ? `Powered by ${PROVIDER_LABELS[provider]}`
-                  : `${PROVIDER_LABELS[DEFAULT_PROVIDER]} unavailable — running on ${PROVIDER_LABELS[provider]}`}
-              </p>
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2">
-                <input
-                  type="text"
-                  aria-label="Chat message"
-                  aria-describedby={input.length > 0 ? "chat-char-count" : undefined}
-                  placeholder="Ask me anything..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  disabled={isLoading}
-                  maxLength={MAX_INPUT_CHARS}
-                  className="flex-1 bg-transparent text-base sm:text-sm text-text placeholder:text-muted focus:outline-none disabled:opacity-50"
-                />
-                <button
-                  type="submit"
-                  aria-label="Send message"
-                  disabled={isLoading || !input.trim()}
-                  className="flex h-6 w-6 items-center justify-center rounded border border-accent/40 bg-transparent text-accent hover:border-accent hover:highlight-border focus-ring transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <p
+                  aria-live="polite"
+                  className={clsx(
+                    "font-mono text-[10px] uppercase tracking-badge",
+                    provider === DEFAULT_PROVIDER ? "text-muted" : "text-accent",
+                  )}
                 >
-                  <ArrowUp size={13} aria-hidden="true" />
-                </button>
-              </div>
-              {input.length > 0 && (
+                  {provider === DEFAULT_PROVIDER
+                    ? `Powered by ${PROVIDER_LABELS[provider]}`
+                    : `${PROVIDER_LABELS[DEFAULT_PROVIDER]} unavailable — running on ${PROVIDER_LABELS[provider]}`}
+                </p>
+                {/* Always mounted, same size as the badge — appearing on the
+                    first keystroke (and at 12px vs 10px) made the row jump. */}
                 <p
                   id="chat-char-count"
                   className={clsx(
-                    "mt-1 text-right text-xs tabular-nums",
+                    "font-mono text-[10px] tabular-nums",
                     MAX_INPUT_CHARS - input.length <= 200 ? "text-accent" : "text-muted",
                   )}
                 >
                   {input.length}/{MAX_INPUT_CHARS}
                 </p>
-              )}
+              </div>
+              <div className="flex items-end gap-2 rounded-lg border border-border bg-bg px-3 py-2">
+                <textarea
+                  ref={inputRef}
+                  rows={1}
+                  aria-label="Chat message"
+                  aria-describedby="chat-char-count"
+                  placeholder="Ask me anything..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                  disabled={inputBlocked}
+                  maxLength={MAX_INPUT_CHARS}
+                  className="max-h-40 flex-1 resize-none field-sizing-content bg-transparent text-base sm:text-sm text-text placeholder:text-muted focus:outline-none disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  aria-label="Send message"
+                  disabled={inputBlocked || !input.trim()}
+                  className="flex h-6 w-6 items-center justify-center rounded border border-accent/40 bg-transparent text-accent hover:border-accent hover:highlight-border focus-ring transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ArrowUp size={13} aria-hidden="true" />
+                </button>
+              </div>
             </form>
           </motion.div>
         </>

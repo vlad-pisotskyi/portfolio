@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Streamdown (chat markdown) composes Tailwind utilities in its dist — scan it
+   so those classes are generated. */
+@source "../node_modules/streamdown/dist/*.js";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
@@ -10,8 +14,16 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-text: var(--text);
-  --color-muted: var(--muted);
   --color-border: var(--border);
+
+  /* shadcn-convention aliases consumed by Streamdown's utilities. `muted`
+     collides (site: text color, shadcn: surface) — rescoped in .chat-markdown
+     below, not here. */
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-muted-foreground: var(--muted);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--bg);
 
   --tracking-label: 0.2em;
   --tracking-badge: 0.15em;
@@ -21,6 +33,13 @@
 
   --animate-fade-in: fade-in 0.2s ease-out;
   --animate-reveal-ltr: reveal-ltr 0.8s ease-out;
+}
+
+/* NOT inline: utilities must emit var(--color-muted) at the use site so the
+   .chat-markdown override below can cascade. Inline mode bakes var(--muted)
+   into every bg-muted/text-muted, which no scoped redefinition can reach. */
+@theme {
+  --color-muted: var(--muted);
 }
 
 @keyframes fade-in {
@@ -60,6 +79,13 @@
 }
 
 @layer utilities {
+  /* Scope for Streamdown output. Inside rendered markdown, `muted` means a
+     SURFACE (shadcn convention: bg-muted on inline code, table headers) —
+     point it at the site's raised surface instead of the muted text color.
+     No site classes render inside this subtree, so nothing else shifts. */
+  .chat-markdown {
+    --color-muted: var(--raised);
+  }
   .focus-ring {
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg;
   }

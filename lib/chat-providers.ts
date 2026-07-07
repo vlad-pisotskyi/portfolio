@@ -17,6 +17,8 @@ export const PROVIDER_LABELS: Record<ChatProvider, string> = {
 /** Metadata the chat route attaches to each assistant message. */
 export interface ChatMessageMetadata {
   provider?: ChatProvider;
+  /** True when the model stopped at the output-token cap, not a natural end. */
+  truncated?: boolean;
 }
 
 /**

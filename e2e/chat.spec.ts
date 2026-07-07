@@ -20,7 +20,7 @@ function uiMessageStream(): string {
     { type: "start" },
     { type: "start-step" },
     { type: "text-start", id: "t1" },
-    { type: "text-delta", id: "t1", delta: "Here is Vlad's availability." },
+    { type: "text-delta", id: "t1", delta: "Here is Vlad's availability. The `StateGraph` demo is live." },
     { type: "text-end", id: "t1" },
     { type: "tool-input-start", toolCallId: "c1", toolName: "show_scheduler" },
     { type: "tool-input-available", toolCallId: "c1", toolName: "show_scheduler", input: {} },
@@ -171,6 +171,31 @@ test.describe("Chat flow", () => {
     const dialog = page.getByRole("dialog", { name: "Chat with Vlad" });
     await expect(dialog.getByRole("alert")).toContainText(/offline/i);
     await expect(dialog.getByText(/retrying/i)).toHaveCount(0);
+  });
+
+  test("markdown inline code paints with the palette's raised surface", async ({ page }) => {
+    await page.goto("/");
+    await mockChatSuccess(page);
+
+    await openChatAndSend(page, "When can we meet?");
+
+    const chip = page.locator('[data-streamdown="inline-code"]', { hasText: "StateGraph" });
+    await expect(chip).toBeVisible();
+    // Compare against a probe painted with the token, not a hardcoded hex —
+    // the check must survive a palette switch.
+    const [chipBg, raisedBg] = await page.evaluate(() => {
+      const el = document.querySelector('[data-streamdown="inline-code"]')!;
+      const probe = document.createElement("div");
+      probe.style.backgroundColor = "var(--raised)";
+      document.body.appendChild(probe);
+      const colors = [
+        getComputedStyle(el).backgroundColor,
+        getComputedStyle(probe).backgroundColor,
+      ];
+      probe.remove();
+      return colors;
+    });
+    expect(chipBg).toBe(raisedBg);
   });
 
   test("passes axe accessibility scan with the chat open", async ({ page }) => {

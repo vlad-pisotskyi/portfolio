@@ -70,13 +70,32 @@ describe("ChatDrawer", () => {
     );
   });
 
-  it("shows a character counter once the user types", async () => {
+  it("always shows the character counter, tracking the typed length", async () => {
     const user = userEvent.setup();
     render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
-    // No counter on an empty input.
-    expect(screen.queryByText(/\/4000$/)).not.toBeInTheDocument();
+    // Visible even when empty — mounting it on first keystroke made the
+    // badge row jump.
+    expect(screen.getByText("0/4000")).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: /chat message/i }), "hello");
     expect(screen.getByText("5/4000")).toBeInTheDocument();
+  });
+
+  it("sizes the counter like the badge so the row height never shifts", () => {
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const badge = screen.getByText(/powered by/i);
+    const counter = screen.getByText("0/4000");
+    expect(counter.className).toMatch(/text-\[10px\]/);
+    expect(badge.className).toMatch(/text-\[10px\]/);
+  });
+
+  it("keeps the provider badge and character counter on one line", async () => {
+    const user = userEvent.setup();
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: /chat message/i }), "hello");
+    const badge = screen.getByText(/powered by/i);
+    const counter = screen.getByText("5/4000");
+    expect(counter.parentElement).toBe(badge.parentElement);
+    expect(badge.parentElement?.className).toMatch(/\bflex\b/);
   });
 
   it("shows greeting when no messages", () => {
@@ -250,6 +269,246 @@ describe("ChatDrawer", () => {
   });
 });
 
+describe("message rendering", () => {
+  function withAssistantText(text: string): UIMessage[] {
+    return [
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [{ type: "text", text }],
+      },
+    ] as unknown as UIMessage[];
+  }
+
+  it("renders assistant markdown as elements, not raw asterisks", () => {
+    mockMessages = withAssistantText(
+      "Vlad brings:\n\n- **Security** engineering\n- Rigorous testing",
+    );
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    // Streamdown emits styled spans tagged with data-streamdown, not <strong>.
+    expect(screen.getByText("Security").dataset.streamdown).toBe("strong");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
+  });
+
+  it("renders assistant links as anchors", () => {
+    mockMessages = withAssistantText(
+      "See [the case study](https://www.pisotskyiv.dev/work/portfolio).",
+    );
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(
+      screen.getByRole("link", { name: /the case study/i }),
+    ).toHaveAttribute("href", expect.stringContaining("pisotskyiv.dev"));
+  });
+
+  it("keeps user text literal — no markdown parsing of user input", () => {
+    mockMessages = [
+      {
+        id: "u1",
+        role: "user",
+        parts: [{ type: "text", text: "what does **bold** mean?" }],
+      },
+    ] as unknown as UIMessage[];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/what does \*\*bold\*\* mean\?/)).toBeInTheDocument();
+  });
+
+  it("wraps unbroken strings like long URLs inside the bubble", () => {
+    const url = `https://www.illumio.com/company/careers/listing?ashby_jid=${"a".repeat(80)}`;
+    mockMessages = [
+      {
+        id: "u1",
+        role: "user",
+        parts: [{ type: "text", text: url }],
+      },
+    ] as unknown as UIMessage[];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(url).className).toMatch(/\bwrap-anywhere\b/);
+  });
+
+  it("marks an answer the server cut at the length cap", () => {
+    mockMessages = [
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Here are the key reasons he stands" }],
+        metadata: { provider: "gemini", truncated: true },
+      },
+    ] as unknown as UIMessage[];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/cut short/i)).toBeInTheDocument();
+  });
+
+  it("shows no truncation note on a complete answer", () => {
+    mockMessages = [
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [{ type: "text", text: "A complete answer." }],
+        metadata: { provider: "gemini" },
+      },
+    ] as unknown as UIMessage[];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.queryByText(/cut short/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps newlines visible in a multiline user bubble", () => {
+    mockMessages = [
+      {
+        id: "u1",
+        role: "user",
+        parts: [{ type: "text", text: "line one\nline two" }],
+      },
+    ] as unknown as UIMessage[];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/line one/).className).toMatch(
+      /\bwhitespace-pre-wrap\b/,
+    );
+  });
+});
+
+describe("multiline input", () => {
+  it("sends the message on plain Enter", async () => {
+    const user = userEvent.setup();
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: /chat message/i });
+    await user.type(input, "hello{Enter}");
+    expect(mockSendMessage).toHaveBeenCalledWith({ text: "hello" });
+    expect(input).toHaveValue("");
+  });
+
+  it("does not send an empty message on Enter", async () => {
+    const user = userEvent.setup();
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: /chat message/i });
+    await user.type(input, "{Enter}");
+    expect(mockSendMessage).not.toHaveBeenCalled();
+  });
+
+  it("Shift+Enter starts a new line instead of sending", async () => {
+    const user = userEvent.setup();
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: /chat message/i });
+    await user.type(input, "line one");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.type(input, "line two");
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(input).toHaveValue("line one\nline two");
+  });
+
+  it("Cmd+Enter starts a new line instead of sending", async () => {
+    const user = userEvent.setup();
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: /chat message/i });
+    await user.type(input, "line one");
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(input).toHaveValue("line one\n");
+  });
+});
+
+describe("thinking indicator", () => {
+  const userMsg = {
+    id: "u1",
+    role: "user",
+    parts: [{ type: "text", text: "hi" }],
+  } as unknown as UIMessage;
+
+  it("shows while the request is in flight and no reply has started", () => {
+    mockStatus = "submitted";
+    mockMessages = [userMsg];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText("...")).toBeInTheDocument();
+  });
+
+  it("stays while the assistant message exists but holds no text yet", () => {
+    // The stream's start event creates the assistant message (with provider
+    // metadata) seconds before the first token — the indicator must not
+    // vanish in that gap.
+    mockStatus = "streaming";
+    mockMessages = [
+      userMsg,
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [],
+        metadata: { provider: "gemini" },
+      } as unknown as UIMessage,
+    ];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText("...")).toBeInTheDocument();
+  });
+
+  it("hides once answer text is streaming in", () => {
+    mockStatus = "streaming";
+    mockMessages = [
+      userMsg,
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Here is" }],
+      } as unknown as UIMessage,
+    ];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.queryByText("...")).not.toBeInTheDocument();
+  });
+
+  it("yields to a pending tool's own status line instead of doubling up", () => {
+    mockStatus = "streaming";
+    mockMessages = [
+      userMsg,
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-show_scheduler",
+            toolCallId: "tc1",
+            state: "input-available",
+          },
+        ],
+      } as unknown as UIMessage,
+    ];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText(/checking availability/i)).toBeInTheDocument();
+    expect(screen.queryByText("...")).not.toBeInTheDocument();
+  });
+
+  it("returns between a tool result and the follow-up answer", () => {
+    mockStatus = "streaming";
+    mockMessages = [
+      userMsg,
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-lookup_bio",
+            toolCallId: "tc1",
+            state: "output-available",
+            output: { topic: "ctd-work", content: "notes" },
+          },
+        ],
+      } as unknown as UIMessage,
+    ];
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByText("...")).toBeInTheDocument();
+  });
+});
+
+describe("input focus", () => {
+  it("blocks the input while the answer streams, then re-enables and refocuses", () => {
+    mockStatus = "streaming";
+    const { rerender } = render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: /chat message/i });
+    expect(input).toBeDisabled();
+    mockStatus = "ready";
+    rerender(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(input).toBeEnabled();
+    expect(input).toHaveFocus();
+  });
+});
+
 describe("provider badge", () => {
   function assistantWith(provider?: string): UIMessage {
     return {
@@ -337,6 +596,30 @@ describe("countdown retry", () => {
     expect(
       screen.getByRole("button", { name: /schedule an intro interview/i }),
     ).toBeInTheDocument();
+  });
+
+  it("blocks the input and send button while the countdown runs", async () => {
+    vi.useFakeTimers();
+    mockError = new Error("retryable");
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByRole("textbox", { name: /chat message/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
+    // Still blocked during the retry attempt itself.
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(screen.getByRole("textbox", { name: /chat message/i })).toBeDisabled();
+  });
+
+  it("re-enables the input once the auto-retry gives up", async () => {
+    vi.useFakeTimers();
+    mockError = new Error("retryable");
+    const { rerender } = render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    mockError = new Error("retryable");
+    rerender(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    // Given up: recovery links are the path forward, but typing works again.
+    const input = screen.getByRole("textbox", { name: /chat message/i });
+    expect(input).toBeEnabled();
+    expect(input).toHaveFocus();
   });
 
   it("never promises a retry when chat is disabled", () => {
