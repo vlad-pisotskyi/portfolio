@@ -8,7 +8,9 @@
       "Bash(git -C /Users/volodymyr.pisotskyi/Desktop/career/portfolio/site status --short)",
       "Bash(git -C /Users/volodymyr.pisotskyi/Desktop/career/portfolio/site diff --stat app/api/book/route.ts lib/booking.ts lib/google-calendar.ts)",
       "Read(//Users/volodymyr.pisotskyi/Desktop/career/docs/bio/**)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(npx tsc *)",
+      "Bash(git push *)"
     ],
     "additionalDirectories": [
       "/Users/volodymyr.pisotskyi/Desktop/career/docs",
