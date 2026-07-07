@@ -25,7 +25,7 @@ That is the entire enforced surface. Everything below is a human judgment a comm
 
 ### Part 2 — Human checkpoints (can't-verify)
 
-The agent cannot open a URL, see a rendered page, or read for tone. Each item below halts at a CHECKPOINT with the user as actor. The agent presents the exact targets to inspect; the user confirms or reports a defect.
+The agent cannot open a URL, see a rendered page, or read for tone — UNLESS the Playwright MCP browser is connected (verify with ToolSearch for `playwright`). When it is, run the `visual-check` skill first: it clears the mechanical halves of steps 3-5 (pages resolve, case studies render 200, no overflow at 375px/1280px, chat launcher operable) with screenshot evidence. What visual-check can NEVER clear stays human: real-device iOS behavior, copy tone (step 6), and the OG unfurl (step 7). Each remaining item halts at a CHECKPOINT with the user as actor. The agent presents the exact targets to inspect; the user confirms or reports a defect.
 
 3. Link reachability. The agent lists every outbound and internal link from `lib/site.ts` and `lib/projects.ts`; the user opens each and confirms it resolves. Targets:
    - `siteConfig.links.github` and `siteConfig.links.linkedin` (`lib/site.ts`) — load, correct profiles.

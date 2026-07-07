@@ -66,5 +66,6 @@ Workflow skills live in `.claude/skills/`, loaded on demand. Authoring standard 
 | `palette-switch` | change the active color palette |
 | `commit-pr` | commit and PR conventions for this repo |
 | `ship-check` | pre-deploy gate before pushing to `main` |
+| `visual-check` | see the rendered site via the Playwright MCP browser — viewport sweeps, screenshots, flow walks |
 
 > Personal working notes and roadmap are in `CLAUDE.local.md` (gitignored).
