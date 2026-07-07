@@ -200,6 +200,13 @@ export async function POST(req: Request) {
       abortSignal: AbortSignal.timeout(STREAM_ABORT_MS),
       stopWhen: stepCountIs(3),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      // Gemini flash is a thinking model and its hidden reasoning tokens bill
+      // against maxOutputTokens — left on, thinking ate most of the cap and
+      // answers stopped mid-sentence (finishReason "length"). Persona Q&A
+      // doesn't need reasoning; other providers ignore the google namespace.
+      providerOptions: {
+        google: { thinkingConfig: { thinkingBudget: 0 } },
+      },
       tools: {
         show_scheduler: tool({
           description:
@@ -230,13 +237,20 @@ export async function POST(req: Request) {
       // Stamp the answering provider on the message: at start (so a
       // breaker-rerouted request shows the fallback immediately) and at each
       // step/message finish (so a mid-request failover overwrites the start
-      // value). The client badge renders this.
-      messageMetadata: ({ part }) =>
-        part.type === "start" ||
-        part.type === "finish-step" ||
-        part.type === "finish"
-          ? { provider: activeProvider }
-          : undefined,
+      // value). The client badge renders this. The final finish also marks a
+      // length-capped answer so the client can label the cut honestly.
+      messageMetadata: ({ part }) => {
+        if (part.type === "start" || part.type === "finish-step") {
+          return { provider: activeProvider };
+        }
+        if (part.type === "finish") {
+          return {
+            provider: activeProvider,
+            ...(part.finishReason === "length" ? { truncated: true } : {}),
+          };
+        }
+        return undefined;
+      },
       // Failover is handled inside the wrapped model, so reaching here means
       // every provider in the chain failed (or a non-transient error surfaced).
       // Send a code, not prose — the client owns the copy, and only a
