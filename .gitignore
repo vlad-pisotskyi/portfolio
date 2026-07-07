@@ -47,3 +47,9 @@ yarn-error.log*
 CLAUDE.local.md
 *.local.md
 /notes/
+
+# graphify knowledge graph (local tooling output, may index internal notes)
+/graphify-out/
+
+# personal machine-specific Claude Code settings
+.claude/settings.local.json
