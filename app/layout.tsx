@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, Space_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { siteConfig } from "@/lib/site";
 import { themeInitScript } from "@/lib/theme";
@@ -75,6 +77,8 @@ export default function RootLayout({ children }: RootLayoutProps) {
           Skip to content
         </a>
         <AuthProvider>{children}</AuthProvider>
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
