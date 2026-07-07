@@ -25,11 +25,19 @@ Code green does not mean the page looks right. This skill drives a real browser 
 4. **Mobile sweep (375px).** `browser_resize` to 375x667, same pages. Check horizontal overflow explicitly:
    `browser_evaluate`: `document.documentElement.scrollWidth > document.documentElement.clientWidth` — must be `false`. Confirm the hero is readable above the fold and the chat launcher is visible and tappable.
 
-5. **Walk the interactive surfaces (read-only).** Theme toggle flips palettes with no flash; nav links land on their sections; chat drawer opens, the provider badge renders above the input, the input focuses. Screenshot each state you assert.
+5. **Walk the interactive surfaces (read-only) — at BOTH widths.** Theme toggle flips palettes with no flash; nav links land on their sections. Open the chat drawer at 1280px AND at 375px: the provider badge renders above the input, the input focuses, the drawer fits the viewport. Screenshot each state you assert.
 
-6. **Spend-gated: at most ONE chat message per session** (real LLM tokens + the visitor rate-limit budget), and only when the check needs a live reply (streaming render, badge behavior). Layout checks never need one.
+6. **See the fallback states without any real outage.** The MCP browser has no route interception, but `browser_evaluate` can patch `window.fetch` BEFORE sending a message, so the real UI renders its real error states on demand:
+   - Countdown retry (transient outage): fake the stream-error chunk the route's `onError` would send —
+     `window.fetch = (url, init) => String(url).includes("/api/chat") ? Promise.resolve(new Response('data: {"type":"error","errorText":"retryable"}\n\ndata: [DONE]\n\n', { status: 200, headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" } })) : origFetch(url, init)` (stash `origFetch = window.fetch` first).
+     Then send a message: the "retrying in Ns" bubble must appear and tick. Screenshot it at 375px too.
+   - Kill switch / rate limit: same patch, but resolve a `Response` with status 503/429 and a JSON body carrying `code: "disabled"` / `"rate_limited"` (see `lib/chat-errors.ts` for the contract). Offline / rate-limit copy must render with NO countdown.
+   - Reload the page afterwards to drop the patch.
+   What this can NEVER force: the server-side provider failover itself (Gemini → Claude badge flip mid-request) — that happens in the lambda. It is covered by unit tests and shows live only in a real outage; do not claim it from the browser. The same states are gate-enforced headlessly in `e2e/chat.spec.ts` (countdown, 375px fit, kill-switch copy) — this step exists so a session can SEE them, not to replace that.
 
-7. **Save evidence.** Screenshots go to the session scratchpad directory; every finding in the report cites its screenshot filename. No screenshot, no claim.
+7. **Spend-gated: at most ONE chat message per session** (real LLM tokens + the visitor rate-limit budget), and only when the check needs a live reply (streaming render, badge behavior). Layout checks never need one — and the fetch-patch states in step 6 cost nothing.
+
+8. **Save evidence.** Screenshots go to the session scratchpad directory; every finding in the report cites its screenshot filename. No screenshot, no claim.
 
 ## Rules
 

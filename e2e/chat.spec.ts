@@ -110,6 +110,69 @@ test.describe("Chat flow", () => {
     ).toBeVisible();
   });
 
+  // The stream-error path: every provider failed transiently and onError sent
+  // the `retryable` code as the error chunk — the drawer must promise the
+  // countdown retry, not show a dead end.
+  async function mockChatStreamError(page: Page, code: string): Promise<void> {
+    await page.route("**/api/chat", (route) =>
+      route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "x-vercel-ai-ui-message-stream": "v1",
+        },
+        body: `data: ${JSON.stringify({ type: "error", errorText: code })}\n\ndata: [DONE]\n\n`,
+      }),
+    );
+  }
+
+  test("a transient outage shows the countdown retry, not a dead end", async ({ page }) => {
+    await page.goto("/");
+    await mockChatStreamError(page, "retryable");
+
+    await openChatAndSend(page, "Hello");
+
+    const dialog = page.getByRole("dialog", { name: "Chat with Vlad" });
+    await expect(dialog.getByRole("alert")).toContainText(/retrying in \d+s/i);
+  });
+
+  test("countdown bubble fits the 375px drawer without overflow", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.goto("/");
+    await mockChatStreamError(page, "retryable");
+
+    await openChatAndSend(page, "Hello");
+
+    const dialog = page.getByRole("dialog", { name: "Chat with Vlad" });
+    await expect(dialog.getByRole("alert")).toContainText(/retrying in \d+s/i);
+    const overflows = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    );
+    expect(overflows).toBe(false);
+  });
+
+  test("kill switch shows honest offline copy with no retry promise", async ({ page }) => {
+    await page.goto("/");
+    await page.route("**/api/chat", (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Chat is currently disabled.",
+          code: "disabled",
+        }),
+      }),
+    );
+
+    await openChatAndSend(page, "Hello");
+
+    const dialog = page.getByRole("dialog", { name: "Chat with Vlad" });
+    await expect(dialog.getByRole("alert")).toContainText(/offline/i);
+    await expect(dialog.getByText(/retrying/i)).toHaveCount(0);
+  });
+
   test("passes axe accessibility scan with the chat open", async ({ page }) => {
     await page.goto("/");
     await mockChatSuccess(page);
