@@ -34,7 +34,8 @@ const ERROR_COPY: Record<ChatErrorCode, string> = {
   retryable: "Chat hit an error and couldn't recover.",
   fatal: "Chat hit an error and couldn't recover.",
   disabled: "Chat is offline right now.",
-  rate_limited: "You've hit the demo's rate limit — it resets within the hour.",
+  rate_limited:
+    "You've hit the demo's daily limit — it resets over the next 24 hours.",
   too_long: "That message was too long for this demo.",
 };
 

@@ -13,13 +13,15 @@ export interface RateLimitResult {
   remaining: number;
   limit: number;
   reset: number;
-  // false when Upstash isn't configured: we fail open so local dev and tests
-  // run without Redis. The provider spend cap is the backstop in that case.
+  // false when no limiter ran: outside production we fail open (local dev and
+  // tests run without Redis); in production with Upstash missing we fail
+  // closed — an unmetered public endpoint that spends LLM budget is worse
+  // than a down one.
   enforced: boolean;
 }
 
-// One memoized limiter per prefix. A stored `null` means Upstash is disabled
-// (no env present) — we fail open for that prefix.
+// One memoized limiter per prefix. A stored `null` means Upstash env is
+// missing — in production that blocks the endpoint (fail-closed).
 const limiters = new Map<string, Ratelimit | null>();
 
 function getLimiter(prefix: string, limit: number): Ratelimit | null {
@@ -30,7 +32,7 @@ function getLimiter(prefix: string, limit: number): Ratelimit | null {
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) {
     console.warn(
-      `[rate-limit] Upstash not configured; ${prefix} is unmetered (fail-open).`,
+      `[rate-limit] Upstash not configured; ${prefix} is blocked in production (fail-closed).`,
     );
     limiters.set(prefix, null);
     return null;

@@ -683,7 +683,12 @@ describe("countdown retry", () => {
       '{"error":"Rate limit reached.","code":"rate_limited"}',
     );
     render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByRole("alert")).toHaveTextContent(/rate limit/i);
+    const alert = screen.getByRole("alert");
+    // Limiter is a 24h sliding window (lib/rate-limit.ts) — copy must not
+    // promise a faster reset than the real one.
+    expect(alert).toHaveTextContent(/daily limit/i);
+    expect(alert).toHaveTextContent(/24 hours/i);
+    expect(alert).not.toHaveTextContent(/within the hour/i);
     expect(screen.queryByText(/retrying/i)).not.toBeInTheDocument();
   });
 });
