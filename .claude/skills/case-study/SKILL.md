@@ -25,7 +25,7 @@ A case study is **data, not a page file.** The single dynamic route `app/(main)/
 
 ## Steps
 
-1. **Gather raw material — do not write from memory.** Source from: the project's entry in `lib/projects.ts` (canonical bullets + metrics), `notes/chatbot-devlog.md` (decisions, dead-ends), `notes/opus-review-brief.md` (architecture + review notes), and the master resume PDF. Every metric in the page must trace to one of these.
+1. **Gather raw material — do not write from memory.** Source from: the project's entry in `lib/projects.ts` (canonical bullets + metrics), `notes/chatbot-devlog.md` (decisions, dead-ends), existing entries in `lib/case-studies.ts` (voice + structure exemplars), and the master resume PDF. Every metric in the page must trace to one of these.
 2. **Sanitize employer work** (CTD RAG and any client project): no client names, program names, or proprietary infrastructure. No internal screenshots. When in doubt, describe the pattern and your decision, not the specific system. Every metric carries a defensible basis ("measured by X in Y").
 3. **Confirm the project entry exists in `lib/projects.ts`** with `slug`, `title`, `role`, and a `description` (the description feeds both the meta description and the OG card — make it a defensible one-sentence summary). The page 404s unless both the project (matched by `slug`) and the case-study entry exist.
 4. **Add the entry to `lib/case-studies.ts`** keyed by the slug, matching the `CaseStudy` type:

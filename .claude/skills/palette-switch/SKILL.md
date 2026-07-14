@@ -1,11 +1,11 @@
 ---
 name: palette-switch
-description: Switch the site's color palette by editing the runtime theme variables in app/globals.css. The site has two live palettes (light default + dark) toggled at runtime. Use when asked to change a palette's colors or try a different scheme.
+description: Switch the site's color palette by editing the runtime theme variables in app/globals.css. The site has two live palettes (light + dark, dark is the runtime default) toggled at runtime. Use when asked to change a palette's colors or try a different scheme.
 ---
 
 # palette-switch
 
-The site runs **two live palettes** — light (default) and dark — toggled at runtime by `components/ui/ThemeToggle.tsx`. Both are defined in `app/globals.css`. To change a palette you edit the runtime CSS variables in the `:root` (light) and/or `.dark` (dark) blocks — NOT the `@theme inline` block.
+The site runs **two live palettes** — light (`:root`, no class on `<html>`) and dark (`.dark`, the runtime default: the `lib/theme.ts` init script applies it unless the visitor chose light) — toggled at runtime by `components/ui/ThemeToggle.tsx`. Both are defined in `app/globals.css`. To change a palette you edit the runtime CSS variables in the `:root` (light) and/or `.dark` (dark) blocks — NOT the `@theme inline` block.
 
 ## When to use / when not
 
@@ -16,8 +16,8 @@ The site runs **two live palettes** — light (default) and dark — toggled at 
 
 `app/globals.css` is the only place colors are defined. It has three relevant blocks:
 
-1. **`@theme inline { … }`** — maps nine Tailwind tokens to runtime vars: `--color-bg: var(--bg)`, `--color-surface: var(--surface)`, `--color-elevated: var(--elevated)`, `--color-raised: var(--raised)`, `--color-accent: var(--accent)`, `--color-accent-hover: var(--accent-hover)`, `--color-text: var(--text)`, `--color-muted: var(--muted)`, `--color-border: var(--border)`. This is just the wiring — **do not put hex here.** It rarely changes (only when adding/removing a slot).
-2. **`:root { … }`** — the **light** palette (default, no class on `<html>`). The nine `--*` hex values live here.
+1. **`@theme inline { … }`** — maps eight of the nine Tailwind color tokens to runtime vars: `--color-bg: var(--bg)`, `--color-surface: var(--surface)`, `--color-elevated: var(--elevated)`, `--color-raised: var(--raised)`, `--color-accent: var(--accent)`, `--color-accent-hover: var(--accent-hover)`, `--color-text: var(--text)`, `--color-border: var(--border)` — plus shadcn-style aliases (`--color-background`, `--color-foreground`, `--color-muted-foreground`, `--color-primary`, `--color-primary-foreground`) and tracking/font/animation tokens. The ninth, `--color-muted: var(--muted)`, lives in a separate **non-inline `@theme` block** just below, so utilities emit `var(--color-muted)` at the use site and `.chat-markdown` can rescope it (the block's comment explains this — keep it non-inline). All of this is wiring — **do not put hex here.** It rarely changes (only when adding/removing a slot).
+2. **`:root { … }`** — the **light** palette (applies when `.dark` is absent). The nine `--*` hex values live here.
 3. **`.dark { … }`** — the **dark** palette (`<html class="dark">`, set by the no-flash script + toggle).
 
 So the nine tokens, in order, are: `--bg`, `--surface`, `--elevated`, `--raised`, `--accent`, `--accent-hover`, `--text`, `--muted`, `--border`. To recolor a palette, edit those nine `--*` lines in the matching block. `@custom-variant dark (&:where(.dark, .dark *))` at the top of the file is what makes `dark:` utilities resolve against the `.dark` block — leave it.

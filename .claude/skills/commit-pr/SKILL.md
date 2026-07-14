@@ -32,7 +32,7 @@ Check: guidance — no commit-lint hook is wired. The check (a `commit-msg` hook
 Rule: a commit body is added only when the "why" is not obvious from the subject. When present, separate it from the subject with one blank line and wrap it to explain intent and trade-offs, not the mechanical diff.
 Check: guidance — reviewer judgment; no automated check. Logged in `CLAUDE.local.md`.
 
-Rule: one feature per PR — small and independently shippable. Never bundle unrelated changes. This mirrors the per-PR discipline in `notes/chatbot-next-steps.md` (one feature per PR, TDD-first, do not bundle).
+Rule: one feature per PR — small and independently shippable. Never bundle unrelated changes.
 Check: guidance — enforced in review. Logged in `CLAUDE.local.md`.
 
 Rule: no emoji anywhere — not in commit subjects or bodies, PR titles or descriptions, or code comments. Structure with words, not glyphs. This is the repo-wide style rule in `CLAUDE.md` ("Style rules").

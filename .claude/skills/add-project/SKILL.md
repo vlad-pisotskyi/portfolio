@@ -28,6 +28,7 @@ All project data lives in `lib/projects.ts`. Components are presentational — c
      github?: string;        // full https URL or omit (never a broken link)
      live?: string;          // full https URL or omit
      caseStudy?: string;     // root-relative path, e.g. "/work/ctd-rag-chatbot"
+     children?: Project[];   // nested sub-projects rendered inside this card
    };
    ```
 
@@ -52,7 +53,7 @@ All project data lives in `lib/projects.ts`. Components are presentational — c
    - `github` / `live`: paste the full `https://` URL or omit the field entirely.
      Check (shape): `npm test -- lib/projects` — `new URL(...)` parses and the value starts with `https://`. This verifies the URL is well-formed; it does NOT open the page.
    - `caseStudy`: a root-relative path (e.g. `/work/ctd-rag-chatbot`).
-     Check (shape): `npm test -- lib/projects` — the value starts with `/`. The test does NOT verify a page renders at that route. The page is built separately via the `case-study` skill; see `app/page.tsx` for the App Router page pattern and `notes/styleguide/nextjs.md` for routing conventions. Do not add a `caseStudy` link before its page exists — a link to a 404 is worse than no link.
+     Check (shape): `npm test -- lib/projects` — the value starts with `/`. The test does NOT verify a page renders at that route. The page is built separately via the `case-study` skill; see `app/(main)/page.tsx` for the App Router page pattern and `notes/styleguide/nextjs.md` for routing conventions. Do not add a `caseStudy` link before its page exists — a link to a 404 is worse than no link.
 
 6. Run the data-shape test: `npm test -- lib/projects`. If it fails, fix the data — never weaken the test. For a new project, confirm the new slug appears in the per-project assertions (the test iterates every entry, so a new slug is covered automatically).
 

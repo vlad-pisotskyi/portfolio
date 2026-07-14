@@ -47,9 +47,9 @@ Use an **API route** (`app/api/`) when:
 - Endpoint consumed by a non-Next.js client
 - Rate-limiting middleware that must run at the route level
 
-This project has exactly one API route: `app/api/chat/route.ts`. It is a route handler because it streams (`streamText` -> `toUIMessageStreamResponse`).
+This project has five API routes: `app/api/chat` (streams — `streamText` -> `toUIMessageStreamResponse`), `app/api/availability` (GET, merged live calendar slots), `app/api/book` (POST, the calendar write), `app/api/cal-redirect`, and `app/api/auth/[...nextauth]` (NextAuth catch-all). Route handlers because they stream, are hit by client fetches, or serve external callers — see the decision rules below.
 
-**Booking is not its own route.** There is no `/api/book`. Scheduling runs entirely inside `/api/chat` as the `show_scheduler` AI tool (`app/api/chat/route.ts:79-89`): the tool calls `getAvailability()` and returns live slots. The chat client (`components/ui/ChatDrawer.tsx`) renders that tool result with `components/ui/SchedulerCard.tsx`, and clicking a slot falls back to a `mailto:` compose (`components/ui/SchedulerCard.tsx:22`, `:65`). So a booking flow is: AI tool in the existing chat route, not a new route or server action.
+**Booking spans chat and its own route.** Inside chat, scheduling is the `show_scheduler` AI tool (search `show_scheduler` in `app/api/chat/route.ts`): the tool returns live slots, the chat client (`components/ui/ChatDrawer.tsx`) renders them with `components/ui/SchedulerCard.tsx`, and clicking a slot builds a `/book?date=…&time=…` URL and opens it via `window.open` (`components/ui/SchedulerCard.tsx`). The standalone `/book` page (`app/book/page.tsx`, `BookingPanel`) fetches `/api/availability` and POSTs to `/api/book`. So booking-adjacent logic goes: slot display in the chat tool; slot selection and the write in the `/book` page + `/api/book` route.
 
 ## Decision tree 3 — State ladder
 
@@ -140,7 +140,7 @@ Both respect `prefers-reduced-motion` automatically via the global `animation-du
 Walk these in order, default to the cheapest answer:
 
 1. Does this need `"use client"`? If unsure, start server (Decision tree 1). Section-level client only for the sticky/scroll-shell exception.
-2. Is this a mutation? Server action by default; API route only for streaming/webhook/external. There is no `/api/book` — booking is the `show_scheduler` tool in `/api/chat` (Decision tree 2).
+2. Is this a mutation? Server action by default; API route only for streaming/webhook/external/client-fetch. Booking already has its route — `/api/book` — and its chat-side entry point is the `show_scheduler` tool in `/api/chat` (Decision tree 2); extend those rather than adding a parallel path.
 3. What state rung does this need? Default to no state; climb only as far as required (Decision tree 3).
 4. Are you about to fetch `/api/...` from a Server Component? Stop — call the function directly (Decision tree 4).
 5. Must this never SSR? Use the `{Name}Client.tsx` `next/dynamic` `ssr: false` recipe (Decision tree 5).
