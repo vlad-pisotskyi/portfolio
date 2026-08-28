@@ -7,7 +7,9 @@ import { FALLBACK_COOLDOWN_MS } from "./chat-fallback";
 // visible countdown-retry is honest.
 
 export const CHAT_ERROR_CODES = [
-  /** Every provider failed transiently — the breaker recovers in ~60s, so a
+  /** Every provider failed transiently — the breaker recovers within
+   * RETRY_COUNTDOWN_SECONDS (the default cooldown; a confirmed Gemini quota
+   * hit holds longer, see lib/chat-fallback.ts QUOTA_COOLDOWN_MS), so a
    * countdown + one auto-retry is an honest promise. */
   "retryable",
   /** Config/auth failure or unknown — a retry would not help; do not promise one. */
@@ -15,7 +17,10 @@ export const CHAT_ERROR_CODES = [
   /** CHAT_ENABLED=false kill switch. */
   "disabled",
   "rate_limited",
+  /** A single message exceeded the per-message input cap. */
   "too_long",
+  /** The whole transcript grew past the demo's conversation ceiling. */
+  "convo_too_long",
 ] as const;
 
 export type ChatErrorCode = (typeof CHAT_ERROR_CODES)[number];

@@ -17,7 +17,7 @@ import {
 } from "@/lib/bio-wiki";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getSystemPrompt } from "@/lib/system-prompt";
-import { MAX_INPUT_CHARS } from "@/lib/chat-limits";
+import { MAX_INPUT_CHARS, MAX_CONVERSATION_CHARS } from "@/lib/chat-limits";
 import {
   type ChatProvider,
   type ResolvedModel,
@@ -25,7 +25,13 @@ import {
   orderProviders,
   createFallbackModel,
   isTransientProviderError,
+  probeGemini,
+  geminiHealth,
+  PROBE_HOLD_MS,
+  QUOTA_COOLDOWN_MS,
+  FALLBACK_COOLDOWN_MS,
 } from "@/lib/chat-fallback";
+import { after } from "next/server";
 
 // googleapis (in the scheduler tool) is Node-only, and we stream — pin Node
 // and cap the function duration. maxDuration bounds cost only: a lambda killed
@@ -128,10 +134,23 @@ export async function POST(req: Request) {
         { status: 413 },
       );
     }
-    const totalChars = messages.reduce((n, m) => n + messageChars(m), 0);
-    if (totalChars > MAX_INPUT_CHARS) {
+    // Per-message cap: the newest user turn only, mirroring the client textarea
+    // limit. Assistant replies and older turns are NOT counted here — that was
+    // the old bug, where a normal multi-turn chat tripped the single-message cap.
+    const lastUserMessage = [...messages]
+      .reverse()
+      .find((m) => m.role === "user");
+    if (lastUserMessage && messageChars(lastUserMessage) > MAX_INPUT_CHARS) {
       return Response.json(
         { error: "Message too long.", code: "too_long" },
+        { status: 413 },
+      );
+    }
+    // Whole-transcript cap: a long back-and-forth, not one overlong message.
+    const totalChars = messages.reduce((n, m) => n + messageChars(m), 0);
+    if (totalChars > MAX_CONVERSATION_CHARS) {
+      return Response.json(
+        { error: "This conversation is too long for the demo.", code: "convo_too_long" },
         { status: 413 },
       );
     }
@@ -169,12 +188,23 @@ export async function POST(req: Request) {
     // leader, reassigned on failover. Stamped into message metadata so the
     // client badge can show the switch instead of hiding it.
     let activeProvider = order[0];
+    // Set when Gemini fails over this request. The stream (and therefore
+    // onFailover) runs after this handler returns, so the after() callback
+    // below reads this flag once the response has finished streaming.
+    let geminiFailedThisRequest = false;
     const model = createFallbackModel(order.map(buildModel), {
       onFailover: (failedIndex, err) => {
         const failed = order[failedIndex];
         const next = order[failedIndex + 1];
         activeProvider = next;
-        breaker.trip(failed);
+        if (failed === "gemini") {
+          // Short hold only — the post-response probe decides the real cooldown
+          // (cleared if Gemini is fine, extended if it is a real 429).
+          geminiFailedThisRequest = true;
+          breaker.trip("gemini", PROBE_HOLD_MS);
+        } else {
+          breaker.trip(failed);
+        }
         // A watchdog timeout has no statusCode — log its name so a stall is
         // distinguishable from a quota 429 in prod logs.
         const status =
@@ -231,6 +261,28 @@ export async function POST(req: Request) {
           },
         }),
       },
+    });
+
+    // After the response finishes streaming, if Gemini fell over this request,
+    // probe it once. A blip (first-token timeout, brief 5xx) clears the breaker
+    // so the next request goes back to Gemini; a real 429 sets the quota flag
+    // and holds Gemini down for a long cooldown. Runs off the response path, so
+    // it never delays the stream ("let Claude finish its work").
+    after(async () => {
+      if (!geminiFailedThisRequest) return;
+      const health = await probeGemini(buildModel("gemini"));
+      if (health === "ok") {
+        breaker.reset("gemini");
+        geminiHealth.quotaExhausted = false;
+        console.warn("[chat] gemini probe: ok — breaker cleared, primary restored next request");
+      } else if (health === "quota") {
+        geminiHealth.quotaExhausted = true;
+        breaker.trip("gemini", QUOTA_COOLDOWN_MS);
+        console.warn("[chat] gemini probe: quota exhausted — flag set, extended cooldown");
+      } else {
+        breaker.trip("gemini", FALLBACK_COOLDOWN_MS);
+        console.warn("[chat] gemini probe: still failing — normal cooldown");
+      }
     });
 
     return result.toUIMessageStreamResponse({

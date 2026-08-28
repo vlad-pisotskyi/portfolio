@@ -691,4 +691,33 @@ describe("countdown retry", () => {
     expect(alert).not.toHaveTextContent(/within the hour/i);
     expect(screen.queryByText(/retrying/i)).not.toBeInTheDocument();
   });
+
+  it("shows conversation-length copy for convo_too_long", () => {
+    mockError = new Error(
+      '{"error":"This conversation is too long for the demo.","code":"convo_too_long"}',
+    );
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/refresh to start a new one/i);
+    // A limit stop, not a chat failure — no "case study" nudge.
+    expect(alert).not.toHaveTextContent(/case study/i);
+    expect(alert).toHaveTextContent(/connect with me on linkedin/i);
+    expect(
+      screen.getByRole("button", { name: /schedule an intro interview/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the case-study nudge for a real chat failure", () => {
+    mockError = new Error("fatal");
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/case study/i);
+  });
+
+  it("drops the case-study nudge for a rate-limit stop", () => {
+    mockError = new Error(
+      '{"error":"Rate limit reached.","code":"rate_limited"}',
+    );
+    render(<ChatDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/case study/i);
+  });
 });

@@ -37,7 +37,16 @@ const ERROR_COPY: Record<ChatErrorCode, string> = {
   rate_limited:
     "You've hit the demo's daily limit — it resets over the next 24 hours.",
   too_long: "That message was too long for this demo.",
+  convo_too_long:
+    "This chat got long enough that the demo stopped it here — refresh to start a new one.",
 };
+
+/** A real chat breakage (vs. a length / rate / kill-switch stop) — only these
+ * get the "learn more in a case study" nudge; a case study can't help someone
+ * who just hit a limit. */
+function isChatFailure(code: ChatErrorCode | null): boolean {
+  return code === "retryable" || code === "fatal";
+}
 
 type RetryState =
   | { phase: "counting"; secondsLeft: number }
@@ -438,16 +447,31 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                   className="flex flex-col gap-2 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-muted"
                 >
                   <span>
-                    {ERROR_COPY[chatErrorCode(error) ?? "fatal"]} Learn more in
-                    a case study, or{" "}
-                    <a
-                      href={siteConfig.links.linkedin}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-accent underline hover:text-accent-hover focus-ring"
-                    >
-                      connect with me on LinkedIn
-                    </a>
+                    {ERROR_COPY[chatErrorCode(error) ?? "fatal"]}{" "}
+                    {/* The "case study" hint only makes sense for an actual
+                        chat failure — not for a length or rate-limit stop. */}
+                    {isChatFailure(chatErrorCode(error)) ? (
+                      <>
+                        Learn more in a case study, or{" "}
+                        <a
+                          href={siteConfig.links.linkedin}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-accent underline hover:text-accent-hover focus-ring"
+                        >
+                          connect with me on LinkedIn
+                        </a>
+                      </>
+                    ) : (
+                      <a
+                        href={siteConfig.links.linkedin}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-accent underline hover:text-accent-hover focus-ring"
+                      >
+                        Connect with me on LinkedIn
+                      </a>
+                    )}
                     {" "}— or{" "}
                     <button
                       type="button"

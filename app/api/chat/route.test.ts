@@ -6,25 +6,38 @@ import { getBioPage } from "@/lib/bio-wiki";
 // Hoisted so the vi.mock factories below can reference them. Each provider's
 // builder returns a minimal model OBJECT (createFallbackModel Proxies the leader,
 // so it must be an object) tagged with `provider` for assertions.
-const { streamTextMock, anthropicBuild, googleBuild, openaiBuild } = vi.hoisted(
-  () => {
-    const makeBuilder = (provider: string) =>
-      vi.fn((modelId: string) => ({
-        specificationVersion: "v2",
-        provider,
-        modelId,
-        supportedUrls: {},
-        doStream: () => Promise.resolve(),
-        doGenerate: () => Promise.resolve(),
-      }));
-    return {
-      streamTextMock: vi.fn(),
-      anthropicBuild: makeBuilder("anthropic"),
-      googleBuild: makeBuilder("gemini"),
-      openaiBuild: makeBuilder("openai"),
-    };
-  },
-);
+const {
+  streamTextMock,
+  generateTextMock,
+  afterTasks,
+  anthropicBuild,
+  googleBuild,
+  openaiBuild,
+} = vi.hoisted(() => {
+  const makeBuilder = (provider: string) =>
+    vi.fn((modelId: string) => ({
+      specificationVersion: "v2",
+      provider,
+      modelId,
+      supportedUrls: {},
+      doStream: () => Promise.resolve(),
+      doGenerate: () => Promise.resolve(),
+    }));
+  return {
+    streamTextMock: vi.fn(),
+    generateTextMock: vi.fn(),
+    afterTasks: [] as Array<() => unknown>,
+    anthropicBuild: makeBuilder("anthropic"),
+    googleBuild: makeBuilder("gemini"),
+    openaiBuild: makeBuilder("openai"),
+  };
+});
+
+/** Run the callbacks the route registered via next/server `after()` — the probe
+ * fires here, after the response has "finished streaming". */
+function runAfterTasks(): Promise<unknown> {
+  return Promise.all(afterTasks.map((task) => task()));
+}
 
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
 vi.mock("@/lib/google-calendar", () => ({
@@ -54,9 +67,15 @@ vi.mock("@ai-sdk/google", () => ({
 }));
 vi.mock("ai", () => ({
   streamText: (...args: unknown[]) => streamTextMock(...args),
+  generateText: (...args: unknown[]) => generateTextMock(...args),
   convertToModelMessages: (m: unknown) => m,
   stepCountIs: (n: number) => n,
   tool: (config: unknown) => config,
+}));
+vi.mock("next/server", () => ({
+  after: (task: () => unknown) => {
+    afterTasks.push(task);
+  },
 }));
 
 const rateLimitMock = checkRateLimit as Mock;
@@ -92,6 +111,8 @@ beforeEach(() => {
   // clean.
   vi.resetModules();
   vi.clearAllMocks();
+  afterTasks.length = 0;
+  generateTextMock.mockResolvedValue({ text: "pong" });
   delete process.env.CHAT_ENABLED;
   delete process.env.AI_PROVIDER;
   delete process.env.AI_FALLBACK;
@@ -125,10 +146,34 @@ describe("POST /api/chat", () => {
     expect(streamTextMock).not.toHaveBeenCalled();
   });
 
-  it("returns 413 when the input is too long", async () => {
+  it("returns 413 too_long when a single message exceeds the per-message cap", async () => {
     const { POST } = await import("./route");
     const res = await POST(makeRequest([userMessage("x".repeat(4001))]));
     expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ code: "too_long" });
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT trip too_long on a long multi-turn chat of short messages", async () => {
+    // The old bug: summing every message (assistant replies included) against
+    // the single-message cap. Ten 500-char turns = 5000 chars total, over
+    // MAX_INPUT_CHARS but under MAX_CONVERSATION_CHARS and no single message
+    // over the per-message cap.
+    const messages = Array.from({ length: 10 }, () => userMessage("y".repeat(500)));
+    const { POST } = await import("./route");
+    const res = await POST(makeRequest(messages));
+    expect(res.status).toBe(200);
+    expect(streamTextMock).toHaveBeenCalled();
+  });
+
+  it("returns 413 convo_too_long when the whole transcript exceeds the conversation cap", async () => {
+    // 12 turns * 2100 chars = 25_200 > MAX_CONVERSATION_CHARS (24_000), each
+    // message under the per-message cap.
+    const messages = Array.from({ length: 12 }, () => userMessage("z".repeat(2100)));
+    const { POST } = await import("./route");
+    const res = await POST(makeRequest(messages));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ code: "convo_too_long" });
     expect(streamTextMock).not.toHaveBeenCalled();
   });
 
@@ -315,6 +360,76 @@ describe("provider metadata for the client badge", () => {
     };
     await model.doStream({});
     expect(metadataFor(getOpts(), "finish")).toEqual({ provider: "anthropic" });
+  });
+});
+
+describe("post-response Gemini probe", () => {
+  function geminiRejecting(statusCode: number) {
+    return {
+      specificationVersion: "v2",
+      provider: "gemini",
+      modelId: "gemini-3.5-flash",
+      supportedUrls: {},
+      doStream: () => Promise.reject({ statusCode }),
+      doGenerate: () => Promise.resolve(),
+    };
+  }
+
+  function lastLeadProvider(): string {
+    const calls = streamTextMock.mock.calls;
+    return (calls[calls.length - 1][0] as { model: { provider: string } }).model
+      .provider;
+  }
+
+  async function postAndFailOverGemini(): Promise<
+    (req: Request) => Promise<Response>
+  > {
+    googleBuild.mockReturnValueOnce(geminiRejecting(429));
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    // Drive the wrapped model so the 429 fails Gemini over and sets the flag.
+    const { model } = streamTextMock.mock.calls[0][0] as {
+      model: { doStream: (o: unknown) => Promise<unknown> };
+    };
+    await model.doStream({});
+    return POST;
+  }
+
+  it("does not probe when Gemini never failed over", async () => {
+    const { POST } = await import("./route");
+    await POST(makeRequest([userMessage("hi")]));
+    await runAfterTasks();
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("clears the breaker when the probe says Gemini is ok", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    generateTextMock.mockResolvedValue({ text: "pong" });
+    const POST = await postAndFailOverGemini();
+    await runAfterTasks();
+    expect(generateTextMock).toHaveBeenCalled();
+
+    // Next request leads with Gemini again — the breaker was reset.
+    await POST(makeRequest([userMessage("again")]));
+    expect(lastLeadProvider()).toBe("gemini");
+    warnSpy.mockRestore();
+  });
+
+  it("sets geminiHealth.quotaExhausted and holds Gemini down on a 429 probe", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    generateTextMock.mockImplementation(() => {
+      throw { statusCode: 429 };
+    });
+    const POST = await postAndFailOverGemini();
+    await runAfterTasks();
+
+    const { geminiHealth } = await import("@/lib/chat-fallback");
+    expect(geminiHealth.quotaExhausted).toBe(true);
+
+    // Next request skips Gemini — still in the extended cooldown.
+    await POST(makeRequest([userMessage("again")]));
+    expect(lastLeadProvider()).toBe("anthropic");
+    warnSpy.mockRestore();
   });
 });
 

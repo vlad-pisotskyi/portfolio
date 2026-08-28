@@ -22,6 +22,9 @@ describe("chatErrorCode", () => {
     expect(
       chatErrorCode(new Error('{"error":"Rate limit reached.","code":"rate_limited"}')),
     ).toBe("rate_limited");
+    expect(
+      chatErrorCode(new Error('{"error":"This conversation is too long.","code":"convo_too_long"}')),
+    ).toBe("convo_too_long");
   });
 
   it("classifies an unknown error shape as fatal — never promise a retry it cannot back", () => {
@@ -42,6 +45,7 @@ describe("retry countdown", () => {
       "disabled",
       "rate_limited",
       "too_long",
+      "convo_too_long",
     ]);
   });
 });

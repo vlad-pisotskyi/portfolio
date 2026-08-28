@@ -1,9 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const { generateTextMock } = vi.hoisted(() => ({ generateTextMock: vi.fn() }));
+vi.mock("ai", () => ({
+  generateText: (...args: unknown[]) => generateTextMock(...args),
+}));
+
 import {
   createBreaker,
   orderProviders,
   createFallbackModel,
   isTransientProviderError,
+  isQuotaError,
+  probeGemini,
   FirstTokenTimeoutError,
   FALLBACK_COOLDOWN_MS,
   FIRST_TOKEN_TIMEOUT_MS,
@@ -53,6 +61,16 @@ describe("createBreaker", () => {
     expect(breaker.isDown("gemini")).toBe(true);
     expect(breaker.isDown("anthropic")).toBe(false);
     breaker.reset("gemini");
+    expect(breaker.isDown("gemini")).toBe(false);
+  });
+
+  it("honors a per-trip cooldown override", () => {
+    let t = 0;
+    const breaker = createBreaker(() => t);
+    breaker.trip("gemini", 5_000);
+    t = 4_999;
+    expect(breaker.isDown("gemini")).toBe(true);
+    t = 5_000;
     expect(breaker.isDown("gemini")).toBe(false);
   });
 });
@@ -417,5 +435,45 @@ describe("isTransientProviderError", () => {
 
   it("fails over on network/unknown errors with no status", () => {
     expect(isTransientProviderError(new Error("fetch failed"))).toBe(true);
+  });
+});
+
+describe("isQuotaError", () => {
+  it("is true only for a 429", () => {
+    expect(isQuotaError({ statusCode: 429 })).toBe(true);
+    expect(isQuotaError({ statusCode: 500 })).toBe(false);
+    expect(isQuotaError({ statusCode: 401 })).toBe(false);
+    expect(isQuotaError(new Error("fetch failed"))).toBe(false);
+    expect(isQuotaError(new FirstTokenTimeoutError("gemini", 10_000))).toBe(false);
+  });
+
+  it("unwraps a RetryError-style wrapper", () => {
+    expect(isQuotaError({ errors: [{ statusCode: 500 }, { statusCode: 429 }] })).toBe(true);
+    expect(isQuotaError({ errors: [{ statusCode: 503 }] })).toBe(false);
+  });
+});
+
+describe("probeGemini", () => {
+  const model = fakeModel("gemini", {});
+
+  it('resolves "ok" when the one-token probe call succeeds', async () => {
+    generateTextMock.mockClear();
+    generateTextMock.mockResolvedValue({ text: "pong" });
+    await expect(probeGemini(model)).resolves.toBe("ok");
+    expect(generateTextMock).toHaveBeenCalledOnce();
+  });
+
+  it('resolves "quota" on a 429 reject', async () => {
+    generateTextMock.mockImplementation(() => {
+      throw { statusCode: 429 };
+    });
+    await expect(probeGemini(model)).resolves.toBe("quota");
+  });
+
+  it('resolves "down" on any other reject', async () => {
+    generateTextMock.mockImplementation(() => {
+      throw { statusCode: 503 };
+    });
+    await expect(probeGemini(model)).resolves.toBe("down");
   });
 });

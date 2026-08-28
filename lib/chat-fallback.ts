@@ -1,4 +1,4 @@
-import type { LanguageModel } from "ai";
+import { generateText, type LanguageModel } from "ai";
 
 // Provider failover policy for the chat route. The pure parts (breaker, ordering,
 // error classification) are SDK-free so they unit-test without network or mocks;
@@ -26,6 +26,20 @@ export type ChatProvider = "gemini" | "anthropic" | "openai";
 export const FALLBACK_COOLDOWN_MS = 60_000;
 export const FIRST_TOKEN_TIMEOUT_MS = 10_000;
 
+/** Short hold on Gemini right after a failover, until the post-response probe
+ * (route's `after()` callback) resolves and decides the real cooldown. Keeps a
+ * flapping provider from being re-tried on the very next request without
+ * committing to the full 60s downgrade for what is usually a transient blip. */
+export const PROBE_HOLD_MS = 15_000;
+
+/** Cooldown once the probe confirms a 429 — a real quota wall, not a blip. */
+export const QUOTA_COOLDOWN_MS = 300_000;
+
+/** Per-lambda Gemini health, mutated in place (same lifetime model as the
+ * breaker: not shared across instances, cleared on cold start). Set by the
+ * route's post-response probe; read for logging / diagnostics. */
+export const geminiHealth: { quotaExhausted: boolean } = { quotaExhausted: false };
+
 /**
  * A provider accepted the connection but produced nothing before the deadline.
  * Failover only fires on a rejected call, so the watchdog converts silence into
@@ -41,7 +55,9 @@ export class FirstTokenTimeoutError extends Error {
 
 export interface Breaker {
   isDown(provider: ChatProvider): boolean;
-  trip(provider: ChatProvider): void;
+  /** Trip for the default cooldown, or `cooldownMs` when given (the probe uses a
+   * short hold first, then re-trips for the real duration). */
+  trip(provider: ChatProvider, cooldownMs?: number): void;
   reset(provider: ChatProvider): void;
   /**
    * Returns true exactly once when a tripped provider's cooldown has lapsed,
@@ -66,8 +82,8 @@ export function createBreaker(
       const until = downUntil.get(provider);
       return until !== undefined && now() < until;
     },
-    trip(provider) {
-      downUntil.set(provider, now() + cooldownMs);
+    trip(provider, overrideMs) {
+      downUntil.set(provider, now() + (overrideMs ?? cooldownMs));
     },
     reset(provider) {
       downUntil.delete(provider);
@@ -136,6 +152,51 @@ export function isTransientProviderError(err: unknown): boolean {
   }
   // No status and no wrapped cause: network/timeout/unknown → fail over.
   return true;
+}
+
+/**
+ * True only for a hard 429 — how Gemini surfaces `RESOURCE_EXHAUSTED` (quota
+ * wall). Distinct from `isTransientProviderError`: a first-token timeout or a
+ * 5xx is transient but NOT a quota problem, so the probe holds Gemini for a
+ * normal cooldown, while a confirmed 429 gets the long one.
+ */
+export function isQuotaError(err: unknown): boolean {
+  const status = statusOf(err);
+  if (status !== undefined) return status === 429;
+  if (
+    err &&
+    typeof err === "object" &&
+    Array.isArray((err as { errors?: unknown[] }).errors)
+  ) {
+    const errors = (err as { errors: unknown[] }).errors;
+    const last = errors[errors.length - 1];
+    if (last && last !== err) return isQuotaError(last);
+  }
+  return false;
+}
+
+/**
+ * One minimal generation against the raw Gemini model (never the failover
+ * wrapper) to tell a real outage from a transient blip after a failover. Run
+ * post-response from the route's `after()` callback so it never delays the
+ * stream. `"quota"` means a 429; `"down"` any other failure; `"ok"` the model
+ * answered.
+ */
+export async function probeGemini(
+  model: ResolvedModel,
+): Promise<"ok" | "quota" | "down"> {
+  try {
+    await generateText({
+      model,
+      prompt: "ping",
+      maxOutputTokens: 1,
+      maxRetries: 0,
+      providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } },
+    });
+    return "ok";
+  } catch (err) {
+    return isQuotaError(err) ? "quota" : "down";
+  }
 }
 
 /**
