@@ -135,5 +135,5 @@ Does not apply to static, data-driven modules (`lib/projects.ts`, `lib/availabil
 did:       <source + co-located test files written/changed>
 gate:      green | FAILED: <which step of npm run gate>
 checked:   npm test red-then-green per behavior; npm run gate; npm run ship if user-visible
-needs-you: <e.g. add missing app/api/chat/route.test.ts before that route ships; confirm coverage guidance> | nothing
+needs-you: <e.g. add missing lib/availability.test.ts before that module is touched again; confirm coverage guidance> | nothing
 ```

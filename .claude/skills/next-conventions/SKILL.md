@@ -49,6 +49,8 @@ Use an **API route** (`app/api/`) when:
 
 This project has five API routes: `app/api/chat` (streams — `streamText` -> `toUIMessageStreamResponse`), `app/api/availability` (GET, merged live calendar slots), `app/api/book` (POST, the calendar write), `app/api/cal-redirect`, and `app/api/auth/[...nextauth]` (NextAuth catch-all). Route handlers because they stream, are hit by client fetches, or serve external callers — see the decision rules below.
 
+**Work that must not delay the response goes in `after()`.** Anything a route handler needs to do once the client has its answer — a health probe, a log flush, a cache warm — is wrapped in `after()` from `next/server`, never awaited on the response path. Canonical: the post-response Gemini probe in `app/api/chat/route.ts` (search `after(`), which decides the breaker cooldown after the stream finishes (see the `chatbot-api` skill). It still runs inside the function's `maxDuration`, so keep the callback cheap.
+
 **Booking spans chat and its own route.** Inside chat, scheduling is the `show_scheduler` AI tool (search `show_scheduler` in `app/api/chat/route.ts`): the tool returns live slots, the chat client (`components/ui/ChatDrawer.tsx`) renders them with `components/ui/SchedulerCard.tsx`, and clicking a slot builds a `/book?date=…&time=…` URL and opens it via `window.open` (`components/ui/SchedulerCard.tsx`). The standalone `/book` page (`app/book/page.tsx`, `BookingPanel`) fetches `/api/availability` and POSTs to `/api/book`. So booking-adjacent logic goes: slot display in the chat tool; slot selection and the write in the `/book` page + `/api/book` route.
 
 ## Decision tree 3 — State ladder
